@@ -935,13 +935,35 @@ function viewDoc(magId, sysId, idx) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
   var doc = s.docs[idx];
   if (!doc) return;
-  // Open in new tab
-  var win = window.open();
-  if (!win) { alert('Autorisez les popups pour ouvrir le document.'); return; }
-  if (doc.type === 'application/pdf') {
-    win.document.write('<html><body style="margin:0"><iframe src="'+doc.data+'" style="width:100%;height:100vh;border:none"></iframe></body></html>');
-  } else {
-    win.document.write('<html><body style="margin:0;background:#000;display:flex;justify-content:center"><img src="'+doc.data+'" style="max-width:100%;height:auto"></body></html>');
+  // Convertir la donnée base64 (data:...;base64,XXXX) en Blob pour un affichage natif
+  try {
+    var dataUrl = doc.data;
+    var parts = dataUrl.split(',');
+    var meta = parts[0];
+    var b64 = parts[1];
+    var mime = (meta.match(/data:([^;]+)/) || [null, doc.type || 'application/octet-stream'])[1];
+    var binaire = atob(b64);
+    var len = binaire.length;
+    var bytes = new Uint8Array(len);
+    for (var i = 0; i < len; i++) { bytes[i] = binaire.charCodeAt(i); }
+    var blob = new Blob([bytes], { type: mime });
+    var blobUrl = URL.createObjectURL(blob);
+    // Ouvre directement le fichier (PDF ou image) dans un nouvel onglet — Brave l'affiche nativement
+    var win = window.open(blobUrl, '_blank');
+    if (!win) {
+      // Popup bloqué → fallback : lien de téléchargement/ouverture manuelle
+      var a = document.createElement('a');
+      a.href = blobUrl;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+    // Libère la mémoire après un délai (laisse le temps d'ouvrir)
+    setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 60000);
+  } catch(e) {
+    alert('Impossible d\'ouvrir le document : ' + e.message);
   }
 }
 
