@@ -45,10 +45,11 @@ input.code-input { border-color: rgba(59,130,246,0.4); color: #3b82f6; font-fami
 a.phone-link { color: #22c55e; text-decoration: none; font-weight: 600; }
 a.map-link { color: #3b82f6; text-decoration: none; }
 .sys-card { background: #1a1f2e; border: 1px solid #2a3045; border-radius: 10px; margin-bottom: 10px; overflow: hidden; }
-.sys-header { padding: 14px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; gap: 8px; }
+.sys-header { padding: 14px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; gap: 8px; flex-wrap: wrap; }
 .sys-header:active { background: #1e2438; }
-.sys-header-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.sys-header-right { display: flex; gap: 5px; align-items: center; flex-shrink: 0; }
+.sys-header-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 auto; }
+.sys-header-right { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: flex-end; flex: 0 1 auto; }
+.sys-header-right .badge { white-space: nowrap; }
 .sys-body { padding: 0 14px 14px; border-top: 1px solid #2a3045; }
 .sys-tabs { display: flex; gap: 4px; margin: 12px 0 14px; }
 .sys-tab { flex: 1; padding: 8px 4px; background: #0d1117; border: 1px solid #2a3045; border-radius: 6px; color: #7a8099; font-size: 11px; font-weight: 600; cursor: pointer; text-align: center; font-family: inherit; }
