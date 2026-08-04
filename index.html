@@ -679,12 +679,16 @@ function renderCards() {
   if (filtered.length===0) {
     html += '<div class="empty">Aucun magasin trouv\u00e9.</div>';
   } else {
+    var _vusListe = (typeof cvcIdsVus === 'function') ? cvcIdsVus() : [];
     filtered.forEach(function(m) {
-      var pannes=0, travaux=0;
+      var pannes=0, travaux=0, nouvellesDemandes=0;
       var prochainDates = [];
       m.systemes.forEach(function(s) {
         s.pannes.forEach(function(p) { if (p.statut==='en cours') pannes++; });
         var tw=s.travaux||[]; tw.forEach(function(t) { if (t.statut==='en cours') travaux++; });
+        (s.demandes||[]).forEach(function(d) {
+          if (d.statut==='en attente' && _vusListe.indexOf(d.id)===-1) nouvellesDemandes++;
+        });
         var pd = getProchainEntretien(s);
         if (pd) prochainDates.push({date:pd, sys:s.codeSys, ju:daysUntil(pd)});
       });
@@ -718,7 +722,11 @@ function renderCards() {
         }
       }
 
-      html += '<div class="card clickable" onclick="openDetail('+m.id+')">'
+      var nouveauBandeau = nouvellesDemandes>0
+        ? '<div style="display:inline-flex;align-items:center;gap:5px;background:#22c55e;color:#052e16;font-weight:800;font-size:11px;letter-spacing:0.5px;padding:4px 10px;border-radius:6px;margin-bottom:8px">&#10024; '+(nouvellesDemandes>1?nouvellesDemandes+' NOUVELLES DEMANDES':'NOUVELLE DEMANDE')+'</div>'
+        : '';
+      html += '<div class="card clickable" onclick="openDetail('+m.id+')" style="'+(nouvellesDemandes>0?'border-color:#22c55e;box-shadow:0 0 0 1px rgba(34,197,94,0.3)':'')+'">'
+        +nouveauBandeau
         +'<div class="tag-row"><span class="badge badge-aldi">'+esc(m.centrale)+'</span><span class="code-tag">N&#176;'+esc(m.code)+'</span></div>'
         +'<div class="card-title">'+esc(m.nom)+'</div>'
         +'<div class="card-sub">&#128205; '+esc(m.adresse)+'<br>&#128222; '+esc(m.contact)+'</div>'
@@ -2340,8 +2348,9 @@ function cvcSetupLogin() {
 var PLANNING_TYPES = {
   'entretien':  { label: 'Entretien',  couleur: '#3b82f6', icone: '\u2744\uFE0F' },
   'depannage':  { label: 'Dépannage',  couleur: '#ef4444', icone: '\uD83D\uDD27' },
+  'travaux':    { label: 'Travaux',    couleur: '#a855f7', icone: '\uD83D\uDEE0\uFE0F' },
   'visite':     { label: 'Visite',     couleur: '#22c55e', icone: '\uD83D\uDC65' },
-  'autre':      { label: 'Autre',      couleur: '#a855f7', icone: '\uD83D\uDCCC' }
+  'autre':      { label: 'Autre',      couleur: '#eab308', icone: '\uD83D\uDCCC' }
 };
 var MOIS_NOMS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
 var JOURS_NOMS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
@@ -2395,6 +2404,9 @@ function renderPlanning() {
     + '</div>'
     + '<button class="btn btn-ghost btn-sm" onclick="planningMoisSuivant()" style="font-size:18px;padding:6px 14px">\u203A</button>'
     + '</div>';
+
+  // Bouton pour planifier une demande ou un travail existant
+  html += '<button class="btn" style="width:100%;background:#0f3d2e;color:#22c55e;border:1px solid #22c55e44;margin-bottom:14px;font-size:13px;font-weight:700" onclick="planningChoisirSource()">\uD83D\uDCCB Planifier une demande ou un travail existant</button>';
 
   // Grille des jours de la semaine
   html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px">';
@@ -2579,6 +2591,123 @@ function planningSupprimerEntree(id) {
   saveData();
   if (cle) { planningOuvrirJour(cle); } else { closeModal(); }
   render();
+}
+
+
+
+// ── Planifier une demande ou un travail existant ────────────────────────────
+function planningChoisirSource() {
+  // Collecter les demandes en attente et travaux en cours de tous les magasins
+  var demandes = [];
+  var travaux = [];
+  magasins.forEach(function(m) {
+    (m.systemes || []).forEach(function(s) {
+      (s.demandes || []).forEach(function(d) {
+        if (d.statut === 'en attente') {
+          demandes.push({ magId: m.id, magNom: m.nom, code: m.code, sysCode: s.codeSys||'', item: d });
+        }
+      });
+      (s.travaux || []).forEach(function(t) {
+        if (t.statut === 'en cours') {
+          travaux.push({ magId: m.id, magNom: m.nom, code: m.code, sysCode: s.codeSys||'', item: t });
+        }
+      });
+    });
+  });
+
+  var html = '<div class="modal-box">'
+    + '<div class="modal-handle"></div>'
+    + '<button class="modal-close" onclick="closeModal()">\u00D7</button>'
+    + '<div class="modal-title">\uD83D\uDCCB Planifier un élément existant</div>';
+
+  // Section demandes
+  html += '<div class="section-title" style="color:#ef4444">\uD83D\uDD14 Demandes en attente ('+demandes.length+')</div>';
+  if (demandes.length === 0) {
+    html += '<p style="font-size:12px;color:#7a8099;font-style:italic;padding:4px 0 10px">Aucune demande en attente.</p>';
+  } else {
+    demandes.forEach(function(x, i) {
+      html += '<div onclick="planningPlanifierSource(\'demande\','+i+')" style="background:#ef444411;border:1px solid #ef444444;border-radius:8px;padding:9px 11px;margin-bottom:6px;cursor:pointer">'
+        + '<div style="font-size:13px;font-weight:700;color:#e2e8f0">'+esc(x.magNom)+' <span style="color:#7a8099;font-weight:400">N\u00B0'+esc(x.code)+'</span></div>'
+        + '<div style="font-size:12px;color:#cbd5e1;margin-top:2px">\u25C6 '+esc(x.item.description||'')+'</div>'
+        + '</div>';
+    });
+  }
+
+  // Section travaux
+  html += '<div class="section-title" style="color:#a855f7;margin-top:12px">\uD83D\uDD27 Travaux en cours ('+travaux.length+')</div>';
+  if (travaux.length === 0) {
+    html += '<p style="font-size:12px;color:#7a8099;font-style:italic;padding:4px 0 10px">Aucun travail en cours.</p>';
+  } else {
+    travaux.forEach(function(x, i) {
+      html += '<div onclick="planningPlanifierSource(\'travail\','+i+')" style="background:#a855f711;border:1px solid #a855f744;border-radius:8px;padding:9px 11px;margin-bottom:6px;cursor:pointer">'
+        + '<div style="font-size:13px;font-weight:700;color:#e2e8f0">'+esc(x.magNom)+' <span style="color:#7a8099;font-weight:400">N\u00B0'+esc(x.code)+'</span></div>'
+        + '<div style="font-size:12px;color:#cbd5e1;margin-top:2px">\u25C6 '+esc(x.item.description||'')+'</div>'
+        + '</div>';
+    });
+  }
+
+  html += '<button class="btn btn-ghost" style="width:100%;margin-top:10px" onclick="closeModal()">Fermer</button>'
+    + '</div>';
+
+  // Stocker temporairement les listes pour l'étape suivante
+  window._planningSources = { demande: demandes, travail: travaux };
+  showModal(html);
+}
+
+// Étape 2 : choisir la date pour l'élément sélectionné
+function planningPlanifierSource(genre, index) {
+  var src = window._planningSources[genre][index];
+  if (!src) return;
+  var typePlanning = (genre === 'demande') ? 'depannage' : 'travaux';
+  var titrePropose = (src.item.description || '').slice(0, 60);
+  var aujourdhui = planningDateKey(new Date());
+
+  var html = '<div class="modal-box">'
+    + '<div class="modal-handle"></div>'
+    + '<button class="modal-close" onclick="closeModal()">\u00D7</button>'
+    + '<div class="modal-title">\uD83D\uDCC5 Choisir la date</div>'
+    + '<div style="background:'+(genre==='demande'?'#ef444411':'#a855f711')+';border:1px solid '+(genre==='demande'?'#ef444444':'#a855f744')+';border-radius:8px;padding:10px;margin-bottom:12px">'
+    +   '<div style="font-size:13px;font-weight:700;color:#e2e8f0">'+esc(src.magNom)+' (N\u00B0'+esc(src.code)+')</div>'
+    +   '<div style="font-size:12px;color:#cbd5e1;margin-top:3px">\u25C6 '+esc(src.item.description||'')+'</div>'
+    + '</div>'
+    + '<div class="form-group"><span class="f-label">Date d\'intervention</span>'
+    +   '<input id="plan-src-date" type="date" value="'+aujourdhui+'"></div>'
+    + '<div class="form-group"><span class="f-label">Heure (optionnel)</span>'
+    +   '<input id="plan-src-heure" type="time"></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+    +   '<button class="btn btn-ghost" onclick="planningChoisirSource()">Retour</button>'
+    +   '<button class="btn" style="flex:1;background:#1d4ed8;color:#fff" onclick="planningConfirmerSource(\''+genre+'\','+index+')">\uD83D\uDCBE Planifier</button>'
+    + '</div>'
+    + '</div>';
+  showModal(html);
+}
+
+// Étape 3 : créer l'entrée planning liée
+function planningConfirmerSource(genre, index) {
+  var src = window._planningSources[genre][index];
+  if (!src) return;
+  var date = document.getElementById('plan-src-date').value;
+  var heure = document.getElementById('plan-src-heure').value;
+  if (!date) { alert('Choisissez une date.'); return; }
+
+  var typePlanning = (genre === 'demande') ? 'depannage' : 'travaux';
+  planning.push({
+    id: planningNewId(),
+    date: date,
+    type: typePlanning,
+    heure: heure,
+    titre: (src.item.description || '').slice(0, 80),
+    magId: src.magId,
+    notes: 'Planifié depuis ' + (genre === 'demande' ? 'une demande' : 'un travail') + ' \u2013 N\u00B0'+src.code,
+    lienGenre: genre,
+    lienId: src.item.id,
+    creePar: (typeof _cvcUserEmail !== 'undefined' ? _cvcUserEmail : '')
+  });
+  saveData();
+  closeModal();
+  planningMois = new Date(date.split('-')[0], parseInt(date.split('-')[1])-1, 1);
+  render();
+  planningOuvrirJour(date);
 }
 
 
