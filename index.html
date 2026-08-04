@@ -334,6 +334,8 @@ function saveData() {
 }
 
 var vue = 'liste';
+var planning = (typeof planning !== 'undefined') ? planning : [];  // entrées du planning mensuel
+var planningMois = new Date();  // mois affiché dans le calendrier
 var magasinSelId = null;
 var sysTabState = {};
 var filters = { texte: '', code: '', centrale: '', pannesEnCours: false, travauxEnCours: false, entretienFilter: '' };
@@ -395,10 +397,15 @@ function render() {
   var actionsEl = document.getElementById('header-actions');
   if (vue === 'liste') {
     backBtn.style.display = 'none'; subEl.innerHTML = '';
-    actionsEl.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="openArchives()" style="margin-right:6px">&#128196;</button><button class="btn btn-ghost btn-sm" onclick="openModalCentrales()">&#9881;</button>';
+    actionsEl.innerHTML = '<button class="btn btn-ghost btn-sm" onclick="openPlanning()" style="margin-right:6px">&#128197;</button><button class="btn btn-ghost btn-sm" onclick="openArchives()" style="margin-right:6px">&#128196;</button><button class="btn btn-ghost btn-sm" onclick="openModalCentrales()">&#9881;</button>';
     document.getElementById('fab').style.display = 'flex';
     renderListe();
     if (typeof cvcAfficherAlerte === 'function' && _sbReady) cvcAfficherAlerte();
+  } else if (vue === 'planning') {
+    backBtn.style.display = 'block'; subEl.innerHTML = '<span style="font-size:15px;font-weight:700;color:#3b82f6">&#128197; Planning</span>';
+    actionsEl.innerHTML = '';
+    document.getElementById('fab').style.display = 'none';
+    renderPlanning();
   } else {
     var m = getMagasin(magasinSelId);
     backBtn.style.display = 'block';
@@ -1400,15 +1407,20 @@ function buildDemandesHtml(magId, s) {
   }
   html += '<div class="section-title">Demandes ('+demandes.length+')</div>';
   var sorted = demandes.slice().reverse();
+  var _vus = (typeof cvcIdsVus === 'function') ? cvcIdsVus() : [];
   sorted.forEach(function(d) {
     var isEnAttente = d.statut === 'en attente';
+    var estNouvelle = isEnAttente && _vus.indexOf(d.id) === -1;
     var urgColor = URGENCE_COLOR[d.urgence] || '#9aa3b4';
     var urgLabel = (URGENCE_ICON[d.urgence]||'') + ' ' + (URGENCE_LABEL[d.urgence]||d.urgence);
-    html += '<div class="intervention-item" style="background:'+urgColor+'11;border-color:'+(isEnAttente?urgColor:'#3f4966')+'">'
+    var _borderCol = estNouvelle ? '#22c55e' : (isEnAttente?urgColor:'#3f4966');
+    var _extraStyle = estNouvelle ? ';border-width:2px;box-shadow:0 0 0 2px rgba(34,197,94,0.25)' : '';
+    html += '<div class="intervention-item" style="background:'+urgColor+'11;border-color:'+_borderCol+_extraStyle+'">'
       +'<div class="intervention-top">'
       +'<span class="intervention-tech">&#128338; '+fmt(d.date)+(d.contact?' &ndash; '+esc(d.contact):'')+'</span>'
       +'<span class="badge" style="background:'+urgColor+'22;color:'+urgColor+'">'+urgLabel+'</span>'
       +'</div>'
+      +(estNouvelle ? '<div style="display:inline-block;background:#22c55e;color:#052e16;font-weight:800;font-size:10px;letter-spacing:0.5px;padding:3px 8px;border-radius:6px;margin-bottom:6px">&#10024; NOUVEAU</div>' : '')
       +'<div class="intervention-desc" style="color:#e2e8f0">&#9670; '+esc(d.description)+'</div>'
       +(d.notes ? '<div class="intervention-action">'+esc(d.notes)+'</div>' : '')
       +'<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">';
@@ -2154,6 +2166,7 @@ function sbChargerDonnees(callback) {
       if (d.centrales) centrales = d.centrales;
       if (d.tarifs) tarifs = d.tarifs;
       if (d.archives) archives = d.archives;
+      if (d.planning) planning = d.planning;
     } else {
       // Base vide (1ère utilisation) → on pousse les données actuelles du fichier
       sbSauvegarderCloud();
@@ -2165,7 +2178,7 @@ function sbChargerDonnees(callback) {
 // Envoie l'état actuel vers Supabase (upsert sur la ligne unique id=1)
 function sbSauvegarderCloud() {
   if (!_sbReady) return;
-  var contenu = { magasins: magasins, centrales: centrales, tarifs: tarifs, archives: archives };
+  var contenu = { magasins: magasins, centrales: centrales, tarifs: tarifs, archives: archives, planning: planning };
   _sb.from('cvc_data').upsert({ id: 1, contenu: contenu, updated_at: new Date().toISOString() }).then(function(res) {
     if (res.error) console.warn('Erreur sauvegarde Supabase:', res.error.message);
   });
@@ -2320,6 +2333,255 @@ function cvcSetupLogin() {
 // ══════════════════════════════════════════════════════════════
 // DÉMARRAGE : on charge d'abord localData (fichier/cache), puis login
 // ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+// MODULE PLANNING MENSUEL
+// ══════════════════════════════════════════════════════════════
+var PLANNING_TYPES = {
+  'entretien':  { label: 'Entretien',  couleur: '#3b82f6', icone: '\u2744\uFE0F' },
+  'depannage':  { label: 'Dépannage',  couleur: '#ef4444', icone: '\uD83D\uDD27' },
+  'visite':     { label: 'Visite',     couleur: '#22c55e', icone: '\uD83D\uDC65' },
+  'autre':      { label: 'Autre',      couleur: '#a855f7', icone: '\uD83D\uDCCC' }
+};
+var MOIS_NOMS = ['Janvier','Février','Mars','Avril','Mai','Juin','Juillet','Août','Septembre','Octobre','Novembre','Décembre'];
+var JOURS_NOMS = ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'];
+
+// Génère un id unique pour une entrée de planning
+function planningNewId() { return 'plan_' + Date.now() + '_' + Math.floor(Math.random()*1000); }
+
+// Convertit une date en clé AAAA-MM-JJ
+function planningDateKey(d) {
+  var y = d.getFullYear();
+  var m = ('0' + (d.getMonth()+1)).slice(-2);
+  var j = ('0' + d.getDate()).slice(-2);
+  return y + '-' + m + '-' + j;
+}
+
+// Récupère les entrées d'un jour donné (clé AAAA-MM-JJ)
+function planningEntreesDuJour(cle) {
+  return planning.filter(function(e){ return e.date === cle; })
+                 .sort(function(a,b){ return (a.heure||'').localeCompare(b.heure||''); });
+}
+
+// Ouvre la vue planning
+function openPlanning() { vue = 'planning'; render(); }
+
+// Navigation mois
+function planningMoisPrecedent() { planningMois = new Date(planningMois.getFullYear(), planningMois.getMonth()-1, 1); render(); }
+function planningMoisSuivant() { planningMois = new Date(planningMois.getFullYear(), planningMois.getMonth()+1, 1); render(); }
+function planningAujourdhui() { planningMois = new Date(); render(); }
+
+// Rendu du calendrier mensuel
+function renderPlanning() {
+  var content = document.getElementById('content');
+  var annee = planningMois.getFullYear();
+  var mois = planningMois.getMonth();
+  var aujourdhuiCle = planningDateKey(new Date());
+
+  // Premier jour du mois + nombre de jours
+  var premierJour = new Date(annee, mois, 1);
+  var dernierJour = new Date(annee, mois+1, 0);
+  var nbJours = dernierJour.getDate();
+  // getDay(): 0=dimanche → on décale pour lundi=0
+  var decalage = (premierJour.getDay() + 6) % 7;
+
+  var html = '';
+  // En-tête navigation
+  html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:8px">'
+    + '<button class="btn btn-ghost btn-sm" onclick="planningMoisPrecedent()" style="font-size:18px;padding:6px 14px">\u2039</button>'
+    + '<div style="text-align:center;flex:1">'
+    +   '<div style="font-size:18px;font-weight:800;color:#e2e8f0">' + MOIS_NOMS[mois] + ' ' + annee + '</div>'
+    +   '<button class="btn btn-ghost btn-sm" onclick="planningAujourdhui()" style="font-size:11px;margin-top:2px;color:#3b82f6">\uD83D\uDCC5 Aujourd\'hui</button>'
+    + '</div>'
+    + '<button class="btn btn-ghost btn-sm" onclick="planningMoisSuivant()" style="font-size:18px;padding:6px 14px">\u203A</button>'
+    + '</div>';
+
+  // Grille des jours de la semaine
+  html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px">';
+  JOURS_NOMS.forEach(function(j){
+    html += '<div style="text-align:center;font-size:11px;font-weight:700;color:#7a8099;padding:4px 0">' + j + '</div>';
+  });
+  html += '</div>';
+
+  // Grille des jours
+  html += '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">';
+  // Cases vides avant le 1er
+  for (var i=0; i<decalage; i++) { html += '<div></div>'; }
+  // Jours du mois
+  for (var jour=1; jour<=nbJours; jour++) {
+    var dateJour = new Date(annee, mois, jour);
+    var cle = planningDateKey(dateJour);
+    var entrees = planningEntreesDuJour(cle);
+    var estAujourdhui = (cle === aujourdhuiCle);
+    var bgCase = estAujourdhui ? '#1e3a5f' : '#161b26';
+    var bordCase = estAujourdhui ? '#3b82f6' : '#2a3045';
+
+    html += '<div onclick="planningOuvrirJour(\'' + cle + '\')" style="min-height:64px;background:' + bgCase + ';border:1px solid ' + bordCase + ';border-radius:8px;padding:4px;cursor:pointer;display:flex;flex-direction:column;gap:2px;overflow:hidden">';
+    html += '<div style="font-size:12px;font-weight:700;color:' + (estAujourdhui?'#60a5fa':'#94a3b8') + '">' + jour + '</div>';
+    // Pastilles des entrées (max 3 affichées)
+    entrees.slice(0,3).forEach(function(e){
+      var t = PLANNING_TYPES[e.type] || PLANNING_TYPES['autre'];
+      html += '<div style="font-size:9px;background:' + t.couleur + '33;color:' + t.couleur + ';border-radius:3px;padding:1px 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3">' + (e.heure?e.heure+' ':'') + esc(e.titre||t.label) + '</div>';
+    });
+    if (entrees.length > 3) {
+      html += '<div style="font-size:9px;color:#7a8099;padding:1px 3px">+' + (entrees.length-3) + '</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Légende
+  html += '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:16px;justify-content:center">';
+  Object.keys(PLANNING_TYPES).forEach(function(k){
+    var t = PLANNING_TYPES[k];
+    html += '<div style="display:flex;align-items:center;gap:4px;font-size:11px;color:#94a3b8"><span style="width:10px;height:10px;border-radius:3px;background:' + t.couleur + '"></span>' + t.label + '</div>';
+  });
+  html += '</div>';
+
+  content.innerHTML = html;
+}
+
+// Ouvre la liste des entrées d'un jour (modale)
+function planningOuvrirJour(cle) {
+  var entrees = planningEntreesDuJour(cle);
+  var parts = cle.split('-');
+  var dateAffiche = parts[2] + '/' + parts[1] + '/' + parts[0];
+
+  var html = '<div class="modal-box">'
+    + '<div class="modal-handle"></div>'
+    + '<button class="modal-close" onclick="closeModal()">\u00D7</button>'
+    + '<div class="modal-title">\uD83D\uDCC5 ' + dateAffiche + '</div>';
+
+  if (entrees.length === 0) {
+    html += '<p style="font-size:13px;color:#7a8099;font-style:italic;padding:8px 0">Aucune intervention prévue ce jour.</p>';
+  } else {
+    entrees.forEach(function(e){
+      var t = PLANNING_TYPES[e.type] || PLANNING_TYPES['autre'];
+      var magNom = '';
+      if (e.magId) {
+        var m = getMagasin(e.magId);
+        if (m) magNom = m.nom + ' (N\u00B0' + m.code + ')';
+      }
+      html += '<div style="background:' + t.couleur + '11;border:1px solid ' + t.couleur + '44;border-radius:10px;padding:10px;margin-bottom:8px">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'
+        +   '<span style="font-weight:700;color:' + t.couleur + '">' + t.icone + ' ' + t.label + (e.heure?' \u2013 '+e.heure:'') + '</span>'
+        + '</div>'
+        + (e.titre ? '<div style="font-size:14px;color:#e2e8f0;font-weight:600">' + esc(e.titre) + '</div>' : '')
+        + (magNom ? '<div style="font-size:12px;color:#94a3b8;margin-top:2px">\uD83D\uDCCD ' + esc(magNom) + '</div>' : '')
+        + (e.notes ? '<div style="font-size:12px;color:#cbd5e1;margin-top:4px">' + esc(e.notes) + '</div>' : '')
+        + '<div style="display:flex;gap:6px;margin-top:8px">'
+        +   '<button class="btn btn-ghost btn-sm" style="flex:1" onclick="planningEditerEntree(\'' + e.id + '\')">\u270F\uFE0F Modifier</button>'
+        +   '<button class="btn btn-ghost btn-sm" onclick="planningSupprimerEntree(\'' + e.id + '\')">\uD83D\uDDD1\uFE0F</button>'
+        + '</div>'
+        + '</div>';
+    });
+  }
+
+  html += '<button class="btn" style="width:100%;background:#1d4ed8;color:#fff;margin-top:8px" onclick="planningNouvelleEntree(\'' + cle + '\')">\u2795 Ajouter une intervention</button>'
+    + '</div>';
+
+  showModal(html);
+}
+
+// Formulaire nouvelle entrée
+function planningNouvelleEntree(cle) {
+  planningFormulaire(null, cle);
+}
+
+// Formulaire édition
+function planningEditerEntree(id) {
+  var e = planning.find(function(x){ return x.id === id; });
+  if (!e) return;
+  planningFormulaire(e, e.date);
+}
+
+// Affiche le formulaire (création ou édition)
+function planningFormulaire(entree, cle) {
+  var estEdition = !!entree;
+  var e = entree || { type:'entretien', heure:'', titre:'', magId:'', notes:'' };
+
+  var parts = cle.split('-');
+  var dateAffiche = parts[2] + '/' + parts[1] + '/' + parts[0];
+
+  var typeOptions = '';
+  Object.keys(PLANNING_TYPES).forEach(function(k){
+    typeOptions += '<option value="' + k + '"' + (e.type===k?' selected':'') + '>' + PLANNING_TYPES[k].icone + ' ' + PLANNING_TYPES[k].label + '</option>';
+  });
+
+  var magOptions = '<option value="">\u2014 Aucun magasin \u2014</option>';
+  magasins.slice().sort(function(a,b){ return a.nom.localeCompare(b.nom); }).forEach(function(m){
+    magOptions += '<option value="' + m.id + '"' + (String(e.magId)===String(m.id)?' selected':'') + '>' + esc(m.nom) + ' (N\u00B0' + esc(m.code) + ')</option>';
+  });
+
+  var html = '<div class="modal-box">'
+    + '<div class="modal-handle"></div>'
+    + '<button class="modal-close" onclick="closeModal()">\u00D7</button>'
+    + '<div class="modal-title">' + (estEdition?'\u270F\uFE0F Modifier':'\u2795 Nouvelle intervention') + '</div>'
+    + '<div style="font-size:13px;color:#94a3b8;margin-bottom:12px">\uD83D\uDCC5 ' + dateAffiche + '</div>'
+    + '<div class="form-group"><span class="f-label">Type</span>'
+    +   '<select id="plan-type">' + typeOptions + '</select></div>'
+    + '<div class="form-group"><span class="f-label">Heure (optionnel)</span>'
+    +   '<input id="plan-heure" type="time" value="' + (e.heure||'') + '"></div>'
+    + '<div class="form-group"><span class="f-label">Titre / objet</span>'
+    +   '<input id="plan-titre" type="text" placeholder="Ex: Entretien annuel, RDV client..." value="' + esc(e.titre||'') + '"></div>'
+    + '<div class="form-group"><span class="f-label">Magasin (optionnel)</span>'
+    +   '<select id="plan-mag">' + magOptions + '</select></div>'
+    + '<div class="form-group"><span class="f-label">Notes (optionnel)</span>'
+    +   '<textarea id="plan-notes" rows="2" placeholder="Détails...">' + esc(e.notes||'') + '</textarea></div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px">'
+    +   '<button class="btn btn-ghost" onclick="planningOuvrirJour(\'' + cle + '\')">Annuler</button>'
+    +   '<button class="btn" style="flex:1;background:#1d4ed8;color:#fff" onclick="planningEnregistrer(' + (estEdition?('\''+e.id+'\''):'null') + ',\'' + cle + '\')">\uD83D\uDCBE Enregistrer</button>'
+    + '</div>'
+    + '</div>';
+
+  showModal(html);
+}
+
+// Enregistre une entrée (création ou édition)
+function planningEnregistrer(id, cle) {
+  var type = document.getElementById('plan-type').value;
+  var heure = document.getElementById('plan-heure').value;
+  var titre = document.getElementById('plan-titre').value.trim();
+  var magId = document.getElementById('plan-mag').value;
+  var notes = document.getElementById('plan-notes').value.trim();
+
+  if (id) {
+    // Édition
+    var e = planning.find(function(x){ return x.id === id; });
+    if (e) {
+      e.type = type; e.heure = heure; e.titre = titre;
+      e.magId = magId ? Number(magId) : ''; e.notes = notes;
+    }
+  } else {
+    // Création
+    planning.push({
+      id: planningNewId(),
+      date: cle,
+      type: type,
+      heure: heure,
+      titre: titre,
+      magId: magId ? Number(magId) : '',
+      notes: notes,
+      creePar: (typeof _cvcUserEmail !== 'undefined' ? _cvcUserEmail : '')
+    });
+  }
+  saveData();
+  closeModal();
+  render();
+}
+
+// Supprime une entrée
+function planningSupprimerEntree(id) {
+  if (!confirm('Supprimer cette intervention du planning ?')) return;
+  var e = planning.find(function(x){ return x.id === id; });
+  var cle = e ? e.date : null;
+  planning = planning.filter(function(x){ return x.id !== id; });
+  saveData();
+  if (cle) { planningOuvrirJour(cle); } else { closeModal(); }
+  render();
+}
+
+
 loadData();
 cvcSetupLogin();
 
