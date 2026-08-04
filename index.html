@@ -1599,6 +1599,10 @@ function buildInterventionsHtml(magId, s, type) {
 
 function setTab(sysId, tab) {
   sysTabState[sysId] = tab;
+  // Acquitter les demandes de ce système quand on ouvre leur section
+  if (tab === 'demandes' && typeof cvcAcquitterDemandesSysteme === 'function') {
+    cvcAcquitterDemandesSysteme(sysId);
+  }
   var m = getMagasin(magasinSelId);
   renderDetail(m);
   setTimeout(function() {
@@ -2236,6 +2240,32 @@ function cvcMarquerToutVu() {
   try { localStorage.setItem(cvcCleVues(), JSON.stringify(ids)); } catch(e) {}
 }
 
+// Acquitte (marque comme vues) uniquement les demandes en attente d'un système donné
+function cvcAcquitterDemandesSysteme(sysId) {
+  var m = getMagasin(magasinSelId);
+  if (!m) return;
+  var s = null;
+  m.systemes.forEach(function(sys){ if (sys.id === sysId) s = sys; });
+  if (!s) return;
+  var vus = cvcIdsVus();
+  var modifie = false;
+  (s.demandes || []).forEach(function(d){
+    if (d.statut === 'en attente' && vus.indexOf(d.id) === -1) {
+      vus.push(d.id);
+      modifie = true;
+    }
+  });
+  if (modifie) {
+    try { localStorage.setItem(cvcCleVues(), JSON.stringify(vus)); } catch(e) {}
+  }
+}
+
+// Compte les demandes en attente non encore acquittées
+function cvcNbNonAcquittees() {
+  var vus = cvcIdsVus();
+  return cvcListerDemandesEnAttente().filter(function(d){ return vus.indexOf(d.id) === -1; }).length;
+}
+
 // Affiche (ou masque) la bannière d'alerte en haut de la page liste
 function cvcAfficherAlerte() {
   var existante = document.getElementById('cvc-alerte-demandes');
@@ -2266,12 +2296,13 @@ function cvcAfficherAlerte() {
   banner.id = 'cvc-alerte-demandes';
   banner.style.cssText = 'background:#7f1d1d;border:1px solid #ef4444;border-radius:10px;padding:12px 14px;margin-bottom:12px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px';
   var txt = nouvelles.length === 1
-    ? '1 nouvelle demande de dépannage'
-    : nouvelles.length + ' nouvelles demandes de dépannage';
+    ? '1 demande non acquittée'
+    : nouvelles.length + ' demandes non acquittées';
   banner.innerHTML = '<span style="color:#fecaca;font-weight:700;font-size:14px">&#128276; ' + txt + '</span>'
-    + '<span style="color:#fca5a5;font-size:12px;white-space:nowrap">Voir &#9654;</span>';
+    + '<span style="color:#fca5a5;font-size:12px;white-space:nowrap">Voir les magasins &#9654;</span>';
   banner.onclick = function() {
-    cvcMarquerToutVu();
+    // On ne marque PAS tout vu : on filtre juste les magasins concernés.
+    // L'acquittement se fait individuellement en ouvrant la section demandes de chaque magasin.
     filterDemandesEnAttente();
   };
   // Insérer tout en haut du contenu
