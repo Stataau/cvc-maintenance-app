@@ -335,6 +335,7 @@ function saveData() {
 
 var vue = 'liste';
 var planning = (typeof planning !== 'undefined') ? planning : [];  // entrées du planning mensuel
+var compteurs = (typeof compteurs !== 'undefined') ? compteurs : {};  // compteurs de numérotation par type/année (ex: {ENT:{2026:80}, SOC:{2026:1}})
 var planningMois = new Date();  // mois affiché dans le calendrier
 var magasinSelId = null;
 var sysTabState = {};
@@ -1070,14 +1071,14 @@ function pdfStyles() {
     +'.status-enc{background:#fef3c7;color:#92400e}'
     +'.status-att{background:#fee2e2;color:#991b1b}'
     +'.footer-pdf{border-top:1px solid #ddd;margin-top:24px;padding-top:12px;display:flex;justify-content:space-between;font-size:10px;color:#999}'
-    +'.sig-zone{margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:40px}'
+    +'.sig-zone{margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:40px}'
     +'.sig-box{border-top:1px solid #aaa;padding-top:8px;font-size:11px;color:#666}'
     +'.sig-pad-wrap{margin-top:6px}'
-    +'.sig-canvas{width:100%;height:110px;border:1px dashed #bbb;border-radius:6px;background:#fff;touch-action:none;display:block}'
+    +'.sig-canvas{width:100%;height:90px;border:1px dashed #bbb;border-radius:6px;background:#fff;touch-action:none;display:block}'
     +'.sig-pad-actions{margin-top:4px;display:flex;gap:6px}'
     +'.sig-clear-btn{font-size:11px;padding:3px 10px;border:1px solid #ddd;background:#f7f7f7;border-radius:5px;cursor:pointer;color:#666}'
-    +'.sig-img{max-width:100%;height:110px;object-fit:contain;display:none}'
-    +'@page{margin:12mm}'+'@media print{.no-print{display:none !important}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.sig-pad-actions{display:none !important}}'
+    +'.sig-img{max-width:100%;height:90px;object-fit:contain;display:none}'
+    +'@page{margin:12mm}'+'@media print{.no-print{display:none !important}body{-webkit-print-color-adjust:exact;print-color-adjust:exact}.sig-pad-actions{display:none !important}.page{padding:0 !important;max-width:100% !important}.section{margin-bottom:12px !important}.info-grid{margin-bottom:12px !important}.header-pdf{margin-bottom:14px !important;padding-bottom:10px !important}.sig-zone{margin-top:12px !important}}'
     +'</style>';
 }
 
@@ -1220,9 +1221,49 @@ function genPdfTravaux(magId, sysId, itemId) {
 }
 
 // -- PDF Attestation Entretien --
+// ══════════════════════════════════════════════════════════════
+// COMPTEURS DE NUMÉROTATION DES ATTESTATIONS (séquentiel, par année)
+// Format : PREFIX-ANNEE/NNN  (ex: ENT-2026/080, SOC-2026/001)
+// Le compteur repart à 1 (ou au numéro de départ) chaque nouvelle année.
+// ══════════════════════════════════════════════════════════════
+// Numéros de départ personnalisés par type (première utilisation d'une année)
+var COMPTEUR_DEPART = { ENT: 80, SOC: 1 };
+
+// Renvoie le prochain numéro formaté SANS l'incrémenter (aperçu)
+function compteurPeek(prefix) {
+  var annee = new Date().getFullYear();
+  if (!compteurs[prefix]) compteurs[prefix] = {};
+  var courant = compteurs[prefix][annee];
+  var prochain;
+  if (courant === undefined) {
+    // Première attestation de l'année : on part du numéro de départ
+    prochain = (COMPTEUR_DEPART[prefix] !== undefined) ? COMPTEUR_DEPART[prefix] : 1;
+  } else {
+    prochain = courant + 1;
+  }
+  return prefix + '-' + annee + '/' + String(prochain).padStart(3, '0');
+}
+
+// Consomme (fixe définitivement) le prochain numéro et le renvoie
+function compteurNext(prefix) {
+  var annee = new Date().getFullYear();
+  if (!compteurs[prefix]) compteurs[prefix] = {};
+  var courant = compteurs[prefix][annee];
+  var prochain;
+  if (courant === undefined) {
+    prochain = (COMPTEUR_DEPART[prefix] !== undefined) ? COMPTEUR_DEPART[prefix] : 1;
+  } else {
+    prochain = courant + 1;
+  }
+  compteurs[prefix][annee] = prochain;
+  saveData();  // persiste immédiatement le compteur (cloud + local)
+  return prefix + '-' + annee + '/' + String(prochain).padStart(3, '0');
+}
+
+
 function genAttestationEntretien(magId, sysId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
-  var docNum = 'ENT-'+String(sysId).slice(-6)+'-'+today().replace(/-/g,'');
+  var docNum = compteurNext('ENT');  // numéro séquentiel ENT-ANNEE/NNN, fixé définitivement
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation Entretien</title>'
     + pdfStyles()
     +'</head><body><div class="page">'
@@ -1252,13 +1293,71 @@ function genAttestationEntretien(magId, sysId) {
     +'<div class="sig-box">Signature technicien'
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="tech"></canvas><img class="sig-img" data-sigimg="tech"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="tech">Effacer</button></div></div>'
     +'</div>'
-    +'<div class="sig-box">Visa responsable site'
+    +'<div class="sig-box">Responsable site'
+    +'<div class="sig-nom-wrap" style="margin:4px 0 6px"><span style="font-size:12px;color:#333">Nom : </span><span class="sig-nom-print" data-signom="resp" style="font-size:12px;color:#111;font-weight:700"></span><input class="sig-nom-input no-print" data-signominput="resp" type="text" placeholder="Nom du responsable" style="font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;width:70%"></div>'
+    +'<span style="font-size:11px;color:#666">Signature</span>'
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
     +'</div>'
     +'</div>'
     +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
     +'</div></body></html>';
   openPdfWindow(html, 'Attestation-Entretien-'+docNum, m, {date:s.dernierEntretien,technicien:s.technicien}, 'Attestation entretien '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum);
+}
+
+// ══════════════════════════════════════════════════════════════
+// ATTESTATION DE LEVÉE DE RÉSERVES SUITE À RAPPORT SOCOTEC
+// Champs à remplir à l'écran (N° rapport, date rapport, technicien,
+// travaux réalisés, nom responsable), puis impression/PDF.
+// ══════════════════════════════════════════════════════════════
+function genAttestationSocotec(magId, sysId) {
+  var m = getMagasin(magId); var s = getSys(m, sysId);
+  var docNum = compteurNext('SOC');  // numéro séquentiel SOC-ANNEE/NNN, fixé définitivement
+  var techDefaut = (s && s.technicien) ? s.technicien : 'David STATHOPOULOS';
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation SOCOTEC</title>'
+    + pdfStyles()
+    +'</head><body><div class="page">'
+    + buildPdfHeader('ATTESTATION DE<br>LEV\u00c9E DE R\u00c9SERVES', docNum)
+    +'<div class="info-grid">'
+    +'<div class="info-box"><h3>Entreprise</h3><div class="info-val">'
+    +'<strong>Argosynergie</strong><br>42, rue Farg\u00e8s<br>13008 Marseille<br>'
+    +'<span style="font-size:11px;color:#1a3a6e">SIRET 391 817 335 00022</span></div></div>'
+    +'<div class="info-box"><h3>Rapport SOCOTEC</h3><div class="info-val">'
+    +'<div style="margin-bottom:6px"><span style="font-size:11px;color:#666">N\u00b0 de rapport :</span><br>'
+    +'<span class="soc-print" data-socprint="numrap" style="font-weight:700"></span>'
+    +'<input class="soc-input no-print" data-socinput="numrap" type="text" placeholder="N\u00b0 du rapport SOCOTEC" style="font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;width:95%"></div>'
+    +'<div><span style="font-size:11px;color:#666">En date du :</span><br>'
+    +'<span class="soc-print" data-socprint="daterap"></span>'
+    +'<input class="soc-input no-print" data-socinput="daterap" type="text" placeholder="jj/mm/aaaa" style="font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;width:95%"></div>'
+    +'</div></div>'
+    +'</div>'
+    +'<div class="section"><h2>Site concern\u00e9</h2>'
+    +'<div class="field-row"><div class="field-label">Magasin</div><div class="field-val">'+esc(m.nom)+' (N\u00b0 '+esc(m.code)+')</div></div>'
+    +'<div class="field-row"><div class="field-label">Adresse</div><div class="field-val">'+esc(m.adresse)+'</div></div>'
+    +'<div class="field-row"><div class="field-label">Centrale</div><div class="field-val">'+esc(m.centrale)+'</div></div>'
+    +'<div class="field-row"><div class="field-label">Technicien intervenant</div><div class="field-val">'
+    +'<span class="soc-print" data-socprint="tech"></span>'
+    +'<input class="soc-input no-print" data-socinput="tech" type="text" value="'+esc(techDefaut)+'" style="font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;width:80%"></div></div>'
+    +'</div>'
+    +'<div class="section"><h2>Travaux r\u00e9alis\u00e9s / r\u00e9serves lev\u00e9es</h2>'
+    +'<div class="soc-print" data-socprint="travaux" style="background:#f0fdf4;border-left:4px solid #22c55e;padding:12px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;min-height:20px"></div>'
+    +'<textarea class="soc-input no-print" data-socinput="travaux" placeholder="D\u00e9crivez ici les travaux r\u00e9alis\u00e9s et les r\u00e9serves lev\u00e9es\u2026" style="width:100%;min-height:90px;font-size:13px;padding:10px;border:1px solid #ccc;border-radius:6px;font-family:inherit;line-height:1.6"></textarea>'
+    +'</div>'
+    +'<div class="section"><h2>D\u00e9claration</h2>'
+    +'<p style="font-size:13px;line-height:1.7;color:#374151">Je soussign\u00e9, technicien qualifi\u00e9, atteste avoir r\u00e9alis\u00e9 les travaux d\u00e9crits ci-dessus en r\u00e9ponse aux observations formul\u00e9es dans le rapport SOCOTEC r\u00e9f\u00e9renc\u00e9, et certifie la lev\u00e9e des r\u00e9serves correspondantes conform\u00e9ment aux r\u00e8gles de l\'art.</p>'
+    +'</div>'
+    +'<div class="sig-zone">'
+    +'<div class="sig-box">Signature technicien'
+    +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="tech"></canvas><img class="sig-img" data-sigimg="tech"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="tech">Effacer</button></div></div>'
+    +'</div>'
+    +'<div class="sig-box">Responsable site'
+    +'<div class="sig-nom-wrap" style="margin:4px 0 6px"><span style="font-size:12px;color:#333">Nom : </span><span class="sig-nom-print" data-signom="resp" style="font-size:12px;color:#111;font-weight:700"></span><input class="sig-nom-input no-print" data-signominput="resp" type="text" placeholder="Nom du responsable" style="font-size:12px;padding:3px 6px;border:1px solid #ccc;border-radius:4px;width:70%"></div>'
+    +'<span style="font-size:11px;color:#666">Signature</span>'
+    +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
+    +'</div>'
+    +'</div>'
+    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
+    +'</div></body></html>';
+  openPdfWindow(html, 'Attestation-SOCOTEC-'+docNum, m, {date:today(),technicien:techDefaut}, 'Attestation lev\u00e9e de r\u00e9serves SOCOTEC \u2013 '+esc(m.nom), docNum);
 }
 
 // -- Fenêtre PDF avec barre d'actions Imprimer + Gmail --
@@ -1284,7 +1383,7 @@ function openPdfWindow(html, filename, m, item, subject, docNum) {
     +'<a href="'+mailtoUrl+'" style="background:#34a853;color:#fff;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px">&#9993; Envoyer par e-mail</a>'
     +'<a href="'+gmailScheme+'" onclick="tryMailApp(event,\''+gmailScheme+'\',\''+gmailWeb+'\')" style="background:#ea4335;color:#fff;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px">&#9993; Gmail</a>'
     +'</div><div style="height:78px"></div>';
-  var sigScript = decodeURIComponent(escape(atob('PHNjcmlwdD4KKGZ1bmN0aW9uKCl7CiAgZnVuY3Rpb24gaW5pdFNpZyhjYW52YXMpewogICAgdmFyIGN0eCA9IGNhbnZhcy5nZXRDb250ZXh0KCcyZCcpOwogICAgLy8gRGltZW5zaW9uIHLDqWVsbGUgZHUgY2FudmFzIChwb3VyIG5ldHRldMOpKQogICAgZnVuY3Rpb24gcmVzaXplKCl7CiAgICAgIHZhciByZWN0ID0gY2FudmFzLmdldEJvdW5kaW5nQ2xpZW50UmVjdCgpOwogICAgICB2YXIgcmF0aW8gPSB3aW5kb3cuZGV2aWNlUGl4ZWxSYXRpbyB8fCAxOwogICAgICBjYW52YXMud2lkdGggPSByZWN0LndpZHRoICogcmF0aW87CiAgICAgIGNhbnZhcy5oZWlnaHQgPSByZWN0LmhlaWdodCAqIHJhdGlvOwogICAgICBjdHguc2NhbGUocmF0aW8sIHJhdGlvKTsKICAgICAgY3R4LmxpbmVXaWR0aCA9IDI7CiAgICAgIGN0eC5saW5lQ2FwID0gJ3JvdW5kJzsKICAgICAgY3R4LmxpbmVKb2luID0gJ3JvdW5kJzsKICAgICAgY3R4LnN0cm9rZVN0eWxlID0gJyMxMTEnOwogICAgfQogICAgcmVzaXplKCk7CiAgICB2YXIgZHJhd2luZyA9IGZhbHNlLCBsYXN0ID0gbnVsbCwgaGFzRHJhd24gPSBmYWxzZTsKICAgIGZ1bmN0aW9uIHBvcyhlKXsKICAgICAgdmFyIHJlY3QgPSBjYW52YXMuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCk7CiAgICAgIHZhciB0ID0gZS50b3VjaGVzID8gZS50b3VjaGVzWzBdIDogZTsKICAgICAgcmV0dXJuIHsgeDogdC5jbGllbnRYIC0gcmVjdC5sZWZ0LCB5OiB0LmNsaWVudFkgLSByZWN0LnRvcCB9OwogICAgfQogICAgZnVuY3Rpb24gc3RhcnQoZSl7IGUucHJldmVudERlZmF1bHQoKTsgZHJhd2luZyA9IHRydWU7IGxhc3QgPSBwb3MoZSk7IH0KICAgIGZ1bmN0aW9uIG1vdmUoZSl7CiAgICAgIGlmKCFkcmF3aW5nKSByZXR1cm47CiAgICAgIGUucHJldmVudERlZmF1bHQoKTsKICAgICAgdmFyIHAgPSBwb3MoZSk7CiAgICAgIGN0eC5iZWdpblBhdGgoKTsKICAgICAgY3R4Lm1vdmVUbyhsYXN0LngsIGxhc3QueSk7CiAgICAgIGN0eC5saW5lVG8ocC54LCBwLnkpOwogICAgICBjdHguc3Ryb2tlKCk7CiAgICAgIGxhc3QgPSBwOwogICAgICBoYXNEcmF3biA9IHRydWU7CiAgICB9CiAgICBmdW5jdGlvbiBlbmQoZSl7IGRyYXdpbmcgPSBmYWxzZTsgfQogICAgY2FudmFzLmFkZEV2ZW50TGlzdGVuZXIoJ21vdXNlZG93bicsIHN0YXJ0KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZW1vdmUnLCBtb3ZlKTsKICAgIHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZXVwJywgZW5kKTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaHN0YXJ0Jywgc3RhcnQsIHtwYXNzaXZlOmZhbHNlfSk7CiAgICBjYW52YXMuYWRkRXZlbnRMaXN0ZW5lcigndG91Y2htb3ZlJywgbW92ZSwge3Bhc3NpdmU6ZmFsc2V9KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaGVuZCcsIGVuZCk7CiAgICBjYW52YXMuX2hhc0RyYXduID0gZnVuY3Rpb24oKXsgcmV0dXJuIGhhc0RyYXduOyB9OwogICAgY2FudmFzLl9jbGVhciA9IGZ1bmN0aW9uKCl7IGN0eC5jbGVhclJlY3QoMCwwLGNhbnZhcy53aWR0aCxjYW52YXMuaGVpZ2h0KTsgaGFzRHJhd249ZmFsc2U7IH07CiAgICBjYW52YXMuX3RvSW1nID0gZnVuY3Rpb24oKXsgcmV0dXJuIGNhbnZhcy50b0RhdGFVUkwoJ2ltYWdlL3BuZycpOyB9OwogICAgcmV0dXJuIGNhbnZhczsKICB9CgogIHZhciBjYW52YXNlcyA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctY2FudmFzJyk7CiAgY2FudmFzZXMuZm9yRWFjaChmdW5jdGlvbihjKXsgaW5pdFNpZyhjKTsgfSk7CgogIC8vIEJvdXRvbnMgZWZmYWNlcgogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ1tkYXRhLXNpZ2NsZWFyXScpLmZvckVhY2goZnVuY3Rpb24oYnRuKXsKICAgIGJ0bi5hZGRFdmVudExpc3RlbmVyKCdjbGljaycsIGZ1bmN0aW9uKCl7CiAgICAgIHZhciBrZXkgPSBidG4uZ2V0QXR0cmlidXRlKCdkYXRhLXNpZ2NsZWFyJyk7CiAgICAgIHZhciBjYW52YXMgPSBkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCcuc2lnLWNhbnZhc1tkYXRhLXNpZz0iJytrZXkrJyJdJyk7CiAgICAgIGlmKGNhbnZhcyAmJiBjYW52YXMuX2NsZWFyKSBjYW52YXMuX2NsZWFyKCk7CiAgICB9KTsKICB9KTsKCiAgLy8gQXZhbnQgaW1wcmVzc2lvbiA6IGZpZ2VyIGxlcyBzaWduYXR1cmVzIGVuIGltYWdlcyAobGUgY2FudmFzIG5lIHMnaW1wcmltZSBwYXMgdG91am91cnMgYmllbikKICB3aW5kb3cuYWRkRXZlbnRMaXN0ZW5lcignYmVmb3JlcHJpbnQnLCBmdW5jdGlvbigpewogICAgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnLnNpZy1jYW52YXMnKS5mb3JFYWNoKGZ1bmN0aW9uKGNhbnZhcyl7CiAgICAgIHZhciBrZXkgPSBjYW52YXMuZ2V0QXR0cmlidXRlKCdkYXRhLXNpZycpOwogICAgICB2YXIgaW1nID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvcignLnNpZy1pbWdbZGF0YS1zaWdpbWc9Iicra2V5KyciXScpOwogICAgICBpZihpbWcgJiYgY2FudmFzLl9oYXNEcmF3biAmJiBjYW52YXMuX2hhc0RyYXduKCkpewogICAgICAgIGltZy5zcmMgPSBjYW52YXMuX3RvSW1nKCk7CiAgICAgICAgaW1nLnN0eWxlLmRpc3BsYXkgPSAnYmxvY2snOwogICAgICAgIGNhbnZhcy5zdHlsZS5kaXNwbGF5ID0gJ25vbmUnOwogICAgICB9CiAgICB9KTsKICB9KTsKICB3aW5kb3cuYWRkRXZlbnRMaXN0ZW5lcignYWZ0ZXJwcmludCcsIGZ1bmN0aW9uKCl7CiAgICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCcuc2lnLWNhbnZhcycpLmZvckVhY2goZnVuY3Rpb24oY2FudmFzKXsKICAgICAgY2FudmFzLnN0eWxlLmRpc3BsYXkgPSAnYmxvY2snOwogICAgfSk7CiAgICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCcuc2lnLWltZycpLmZvckVhY2goZnVuY3Rpb24oaW1nKXsKICAgICAgaW1nLnN0eWxlLmRpc3BsYXkgPSAnbm9uZSc7CiAgICB9KTsKICB9KTsKfSkoKTsKPC9zY3JpcHQ+')));
+  var sigScript = decodeURIComponent(escape(atob('PHNjcmlwdD4KKGZ1bmN0aW9uKCl7CiAgZnVuY3Rpb24gaW5pdFNpZyhjYW52YXMpewogICAgdmFyIGN0eCA9IGNhbnZhcy5nZXRDb250ZXh0KCcyZCcpOwogICAgZnVuY3Rpb24gcmVzaXplKCl7CiAgICAgIHZhciByZWN0ID0gY2FudmFzLmdldEJvdW5kaW5nQ2xpZW50UmVjdCgpOwogICAgICB2YXIgcmF0aW8gPSB3aW5kb3cuZGV2aWNlUGl4ZWxSYXRpbyB8fCAxOwogICAgICBjYW52YXMud2lkdGggPSByZWN0LndpZHRoICogcmF0aW87CiAgICAgIGNhbnZhcy5oZWlnaHQgPSByZWN0LmhlaWdodCAqIHJhdGlvOwogICAgICBjdHguc2NhbGUocmF0aW8sIHJhdGlvKTsKICAgICAgY3R4LmxpbmVXaWR0aCA9IDI7CiAgICAgIGN0eC5saW5lQ2FwID0gJ3JvdW5kJzsKICAgICAgY3R4LmxpbmVKb2luID0gJ3JvdW5kJzsKICAgICAgY3R4LnN0cm9rZVN0eWxlID0gJyMxMTEnOwogICAgfQogICAgcmVzaXplKCk7CiAgICB2YXIgZHJhd2luZyA9IGZhbHNlLCBsYXN0ID0gbnVsbCwgaGFzRHJhd24gPSBmYWxzZTsKICAgIGZ1bmN0aW9uIHBvcyhlKXsKICAgICAgdmFyIHJlY3QgPSBjYW52YXMuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCk7CiAgICAgIHZhciB0ID0gZS50b3VjaGVzID8gZS50b3VjaGVzWzBdIDogZTsKICAgICAgcmV0dXJuIHsgeDogdC5jbGllbnRYIC0gcmVjdC5sZWZ0LCB5OiB0LmNsaWVudFkgLSByZWN0LnRvcCB9OwogICAgfQogICAgZnVuY3Rpb24gc3RhcnQoZSl7IGUucHJldmVudERlZmF1bHQoKTsgZHJhd2luZyA9IHRydWU7IGxhc3QgPSBwb3MoZSk7IH0KICAgIGZ1bmN0aW9uIG1vdmUoZSl7CiAgICAgIGlmKCFkcmF3aW5nKSByZXR1cm47CiAgICAgIGUucHJldmVudERlZmF1bHQoKTsKICAgICAgdmFyIHAgPSBwb3MoZSk7CiAgICAgIGN0eC5iZWdpblBhdGgoKTsKICAgICAgY3R4Lm1vdmVUbyhsYXN0LngsIGxhc3QueSk7CiAgICAgIGN0eC5saW5lVG8ocC54LCBwLnkpOwogICAgICBjdHguc3Ryb2tlKCk7CiAgICAgIGxhc3QgPSBwOwogICAgICBoYXNEcmF3biA9IHRydWU7CiAgICB9CiAgICBmdW5jdGlvbiBlbmQoZSl7IGRyYXdpbmcgPSBmYWxzZTsgfQogICAgY2FudmFzLmFkZEV2ZW50TGlzdGVuZXIoJ21vdXNlZG93bicsIHN0YXJ0KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZW1vdmUnLCBtb3ZlKTsKICAgIHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZXVwJywgZW5kKTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaHN0YXJ0Jywgc3RhcnQsIHtwYXNzaXZlOmZhbHNlfSk7CiAgICBjYW52YXMuYWRkRXZlbnRMaXN0ZW5lcigndG91Y2htb3ZlJywgbW92ZSwge3Bhc3NpdmU6ZmFsc2V9KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaGVuZCcsIGVuZCk7CiAgICBjYW52YXMuX2hhc0RyYXduID0gZnVuY3Rpb24oKXsgcmV0dXJuIGhhc0RyYXduOyB9OwogICAgY2FudmFzLl9jbGVhciA9IGZ1bmN0aW9uKCl7IGN0eC5jbGVhclJlY3QoMCwwLGNhbnZhcy53aWR0aCxjYW52YXMuaGVpZ2h0KTsgaGFzRHJhd249ZmFsc2U7IH07CiAgICBjYW52YXMuX3RvSW1nID0gZnVuY3Rpb24oKXsgcmV0dXJuIGNhbnZhcy50b0RhdGFVUkwoJ2ltYWdlL3BuZycpOyB9OwogICAgcmV0dXJuIGNhbnZhczsKICB9CgogIHZhciBjYW52YXNlcyA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctY2FudmFzJyk7CiAgY2FudmFzZXMuZm9yRWFjaChmdW5jdGlvbihjKXsgaW5pdFNpZyhjKTsgfSk7CgogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ1tkYXRhLXNpZ2NsZWFyXScpLmZvckVhY2goZnVuY3Rpb24oYnRuKXsKICAgIGJ0bi5hZGRFdmVudExpc3RlbmVyKCdjbGljaycsIGZ1bmN0aW9uKCl7CiAgICAgIHZhciBrZXkgPSBidG4uZ2V0QXR0cmlidXRlKCdkYXRhLXNpZ2NsZWFyJyk7CiAgICAgIHZhciBjYW52YXMgPSBkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCcuc2lnLWNhbnZhc1tkYXRhLXNpZz0iJytrZXkrJyJdJyk7CiAgICAgIGlmKGNhbnZhcyAmJiBjYW52YXMuX2NsZWFyKSBjYW52YXMuX2NsZWFyKCk7CiAgICB9KTsKICB9KTsKCiAgLy8gQ2hhbXAgTm9tIDogcmVjb3BpZXIgbGEgdmFsZXVyIGRlIGwnaW5wdXQgdmVycyBsZSBzcGFuIMOgIGwnaW1wcmVzc2lvbgogIGZ1bmN0aW9uIHN5bmNOb21zKCl7CiAgICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCcuc2lnLW5vbS1pbnB1dCcpLmZvckVhY2goZnVuY3Rpb24oaW5wdXQpewogICAgICB2YXIga2V5ID0gaW5wdXQuZ2V0QXR0cmlidXRlKCdkYXRhLXNpZ25vbWlucHV0Jyk7CiAgICAgIHZhciBzcGFuID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvcignLnNpZy1ub20tcHJpbnRbZGF0YS1zaWdub209Iicra2V5KyciXScpOwogICAgICBpZihzcGFuKXsgc3Bhbi50ZXh0Q29udGVudCA9IGlucHV0LnZhbHVlIHx8ICcnOyB9CiAgICB9KTsKICB9CgogIC8vIENoYW1wcyBTT0NPVEVDIChOwrAgcmFwcG9ydCwgZGF0ZSwgdGVjaG5pY2llbiwgdHJhdmF1eCkgOiBpbnB1dC90ZXh0YXJlYSAtPiBzcGFuIMOgIGwnaW1wcmVzc2lvbgogIGZ1bmN0aW9uIHN5bmNTb2MoKXsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zb2MtaW5wdXQnKS5mb3JFYWNoKGZ1bmN0aW9uKGlucHV0KXsKICAgICAgdmFyIGtleSA9IGlucHV0LmdldEF0dHJpYnV0ZSgnZGF0YS1zb2NpbnB1dCcpOwogICAgICB2YXIgc3BhbiA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoJy5zb2MtcHJpbnRbZGF0YS1zb2NwcmludD0iJytrZXkrJyJdJyk7CiAgICAgIGlmKHNwYW4peyBzcGFuLnRleHRDb250ZW50ID0gaW5wdXQudmFsdWUgfHwgJyc7IH0KICAgIH0pOwogIH0KCiAgd2luZG93LmFkZEV2ZW50TGlzdGVuZXIoJ2JlZm9yZXByaW50JywgZnVuY3Rpb24oKXsKICAgIC8vIEZpZ2VyIGxlcyBzaWduYXR1cmVzIGVuIGltYWdlcwogICAgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnLnNpZy1jYW52YXMnKS5mb3JFYWNoKGZ1bmN0aW9uKGNhbnZhcyl7CiAgICAgIHZhciBrZXkgPSBjYW52YXMuZ2V0QXR0cmlidXRlKCdkYXRhLXNpZycpOwogICAgICB2YXIgaW1nID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvcignLnNpZy1pbWdbZGF0YS1zaWdpbWc9Iicra2V5KyciXScpOwogICAgICBpZihpbWcgJiYgY2FudmFzLl9oYXNEcmF3biAmJiBjYW52YXMuX2hhc0RyYXduKCkpewogICAgICAgIGltZy5zcmMgPSBjYW52YXMuX3RvSW1nKCk7CiAgICAgICAgaW1nLnN0eWxlLmRpc3BsYXkgPSAnYmxvY2snOwogICAgICAgIGNhbnZhcy5zdHlsZS5kaXNwbGF5ID0gJ25vbmUnOwogICAgICB9CiAgICB9KTsKICAgIC8vIEFmZmljaGVyIGxlcyBub21zIHRhcMOpcyArIGNoYW1wcyBTT0NPVEVDCiAgICBzeW5jTm9tcygpOwogICAgc3luY1NvYygpOwogIH0pOwogIHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdhZnRlcnByaW50JywgZnVuY3Rpb24oKXsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctY2FudmFzJykuZm9yRWFjaChmdW5jdGlvbihjYW52YXMpewogICAgICBjYW52YXMuc3R5bGUuZGlzcGxheSA9ICdibG9jayc7CiAgICB9KTsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctaW1nJykuZm9yRWFjaChmdW5jdGlvbihpbWcpewogICAgICBpbWcuc3R5bGUuZGlzcGxheSA9ICdub25lJzsKICAgIH0pOwogIH0pOwp9KSgpOwo8L3NjcmlwdD4=')));
   html = html.replace('</body>', actionBar + sigScript + '</body>');
   var win = window.open('', '_blank');
   if (!win) { alert('Autorisez les popups pour g\u00e9n\u00e9rer le PDF.'); return; }
@@ -1760,6 +1859,7 @@ function openModalEntretien(magId, sysId) {
     +'<div class="form-group"><label class="form-label">Notes / Observations</label><textarea id="e-notes">'+esc(s.notesEntretien||'')+'</textarea></div>'
     +'<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Annuler</button>'
     +'<button class="btn btn-orange btn-sm" onclick="genAttestationEntretien('+magId+','+sysId+');closeModal()">&#128438; Attestation PDF</button>'
+    +'<button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="genAttestationSocotec('+magId+','+sysId+');closeModal()">&#128203; Attestation SOCOTEC</button>'
     +'<button class="btn btn-success" onclick="saveEntretien('+magId+','+sysId+')">Enregistrer</button></div>'
     +'</div>');
   // Pré-remplir trajets si déjà saisis
@@ -2206,6 +2306,7 @@ function sbChargerDonnees(callback) {
       if (d.tarifs) tarifs = d.tarifs;
       if (d.archives) archives = d.archives;
       if (d.planning) planning = d.planning;
+      if (d.compteurs) compteurs = d.compteurs;
     } else {
       // Base vide (1ère utilisation) → on pousse les données actuelles du fichier
       sbSauvegarderCloud();
@@ -2217,7 +2318,7 @@ function sbChargerDonnees(callback) {
 // Envoie l'état actuel vers Supabase (upsert sur la ligne unique id=1)
 function sbSauvegarderCloud() {
   if (!_sbReady) return;
-  var contenu = { magasins: magasins, centrales: centrales, tarifs: tarifs, archives: archives, planning: planning };
+  var contenu = { magasins: magasins, centrales: centrales, tarifs: tarifs, archives: archives, planning: planning, compteurs: compteurs };
   _sb.from('cvc_data').upsert({ id: 1, contenu: contenu, updated_at: new Date().toISOString() }).then(function(res) {
     if (res.error) console.warn('Erreur sauvegarde Supabase:', res.error.message);
   });
