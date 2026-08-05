@@ -1087,7 +1087,7 @@ var LOGO_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAoMAAADICAYAAACTbu
 function buildPdfHeader(docTitle, docNum) {
   return '<div class="header-pdf">'
     +'<div class="logo-zone"><img src="'+LOGO_B64+'" style="height:55px;display:block"></div>'
-    +'<div class="doc-type"><div class="doc-title">'+docTitle+'</div><div class="doc-num">R\u00e9f. : '+docNum+'</div><div class="doc-num">Date : '+fmt(today())+'</div></div>'
+    +'<div class="doc-type"><div class="doc-title">'+docTitle+'</div><div class="doc-num">R\u00e9f. : <span class="docnum-slot">'+docNum+'</span><span class="docnum-note no-print" style="display:block;font-size:9px;color:#f59e0b;font-weight:400">(n\u00b0 provisoire, fix\u00e9 \u00e0 l&rsquo;impression)</span></div><div class="doc-num">Date : '+fmt(today())+'</div></div>'
     +'</div>';
 }
 
@@ -1171,7 +1171,7 @@ function genPdfDepannage(magId, sysId, itemId) {
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
     +'</div>'
     +'</div>'
-    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
+    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb"><span class="docnum-slot">'+docNum+'</span></span></div>'
     +'</div></body></html>';
   openPdfWindow(html, 'Fiche-Depannage-'+docNum, m, p, 'D\u00e9pannage '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum);
 }
@@ -1214,7 +1214,7 @@ function genPdfTravaux(magId, sysId, itemId) {
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
     +'</div>'
     +'</div>'
-    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
+    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb"><span class="docnum-slot">'+docNum+'</span></span></div>'
     +'</div></body></html>';
 
   openPdfWindow(html, 'Fiche-Travaux-'+docNum, m, t, 'Travaux '+esc(s.codeSys)+' – '+esc(m.nom), docNum);
@@ -1232,8 +1232,8 @@ var COMPTEUR_DEPART = { ENT: 80, SOC: 1 };
 // Renvoie le prochain numéro formaté SANS l'incrémenter (aperçu)
 function compteurPeek(prefix) {
   var annee = new Date().getFullYear();
-  if (!compteurs[prefix]) compteurs[prefix] = {};
-  var courant = compteurs[prefix][annee];
+  // Lecture seule : ne modifie pas l'objet compteurs (pas de consommation)
+  var courant = (compteurs[prefix]) ? compteurs[prefix][annee] : undefined;
   var prochain;
   if (courant === undefined) {
     // Première attestation de l'année : on part du numéro de départ
@@ -1260,10 +1260,18 @@ function compteurNext(prefix) {
   return prefix + '-' + annee + '/' + String(prochain).padStart(3, '0');
 }
 
+// Appelée depuis la fenêtre PDF au moment d'imprimer : consomme et renvoie le numéro définitif.
+// Si prefix vide/inconnu (fiches dépannage/travaux sans compteur), renvoie l'aperçu inchangé.
+function cvcConsommerNumero(prefix, apercu) {
+  if (prefix !== 'ENT' && prefix !== 'SOC') return apercu;
+  return compteurNext(prefix);
+}
+
 
 function genAttestationEntretien(magId, sysId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
-  var docNum = compteurNext('ENT');  // numéro séquentiel ENT-ANNEE/NNN, fixé définitivement
+  var docNum = compteurPeek('ENT');  // APERÇU du numéro (non consommé) ; fixé à l'impression
+  var docPrefix = 'ENT';
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation Entretien</title>'
     + pdfStyles()
     +'</head><body><div class="page">'
@@ -1299,9 +1307,9 @@ function genAttestationEntretien(magId, sysId) {
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
     +'</div>'
     +'</div>'
-    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
+    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb"><span class="docnum-slot">'+docNum+'</span></span></div>'
     +'</div></body></html>';
-  openPdfWindow(html, 'Attestation-Entretien-'+docNum, m, {date:s.dernierEntretien,technicien:s.technicien}, 'Attestation entretien '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum);
+  openPdfWindow(html, 'Attestation-Entretien-'+docNum, m, {date:s.dernierEntretien,technicien:s.technicien}, 'Attestation entretien '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum, docPrefix);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1311,7 +1319,8 @@ function genAttestationEntretien(magId, sysId) {
 // ══════════════════════════════════════════════════════════════
 function genAttestationSocotec(magId, sysId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
-  var docNum = compteurNext('SOC');  // numéro séquentiel SOC-ANNEE/NNN, fixé définitivement
+  var docNum = compteurPeek('SOC');  // APERÇU du numéro (non consommé) ; fixé à l'impression
+  var docPrefix = 'SOC';
   var techDefaut = (s && s.technicien) ? s.technicien : 'David STATHOPOULOS';
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation SOCOTEC</title>'
     + pdfStyles()
@@ -1355,13 +1364,13 @@ function genAttestationSocotec(magId, sysId) {
     +'<div class="sig-pad-wrap"><canvas class="sig-canvas" data-sig="resp"></canvas><img class="sig-img" data-sigimg="resp"><div class="sig-pad-actions no-print"><button class="sig-clear-btn" data-sigclear="resp">Effacer</button></div></div>'
     +'</div>'
     +'</div>'
-    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb">'+docNum+'</span></div>'
+    +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb"><span class="docnum-slot">'+docNum+'</span></span></div>'
     +'</div></body></html>';
-  openPdfWindow(html, 'Attestation-SOCOTEC-'+docNum, m, {date:today(),technicien:techDefaut}, 'Attestation lev\u00e9e de r\u00e9serves SOCOTEC \u2013 '+esc(m.nom), docNum);
+  openPdfWindow(html, 'Attestation-SOCOTEC-'+docNum, m, {date:today(),technicien:techDefaut}, 'Attestation lev\u00e9e de r\u00e9serves SOCOTEC \u2013 '+esc(m.nom), docNum, docPrefix);
 }
 
 // -- Fenêtre PDF avec barre d'actions Imprimer + Gmail --
-function openPdfWindow(html, filename, m, item, subject, docNum) {
+function openPdfWindow(html, filename, m, item, subject, docNum, docPrefix) {
   var mailBody = 'Bonjour,\n\nVeuillez trouver ci-joint la fiche : '+subject
     +'\n\nMagasin : '+m.nom+' \u2013 N\u00b0'+m.code
     +'\nAdresse : '+m.adresse
@@ -1379,12 +1388,13 @@ function openPdfWindow(html, filename, m, item, subject, docNum) {
     +'&su='+encodeURIComponent('[Argosynergie] '+subject)
     +'&body='+encodeURIComponent(mailBody);
   var actionBar = '<div class="no-print" style="position:fixed;bottom:0;left:0;right:0;background:#1a1f2e;border-top:2px solid #2a3045;padding:14px 16px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap;z-index:999">'
-    +'<button onclick="window.print()" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer">&#128438; Imprimer / PDF</button>'
+    +'<button onclick="cvcImprimerDoc()" style="background:#3b82f6;color:#fff;border:none;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer">&#128438; Imprimer / PDF</button>'
     +'<a href="'+mailtoUrl+'" style="background:#34a853;color:#fff;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px">&#9993; Envoyer par e-mail</a>'
     +'<a href="'+gmailScheme+'" onclick="tryMailApp(event,\''+gmailScheme+'\',\''+gmailWeb+'\')" style="background:#ea4335;color:#fff;border-radius:8px;padding:12px 22px;font-size:14px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px">&#9993; Gmail</a>'
     +'</div><div style="height:78px"></div>';
   var sigScript = decodeURIComponent(escape(atob('PHNjcmlwdD4KKGZ1bmN0aW9uKCl7CiAgZnVuY3Rpb24gaW5pdFNpZyhjYW52YXMpewogICAgdmFyIGN0eCA9IGNhbnZhcy5nZXRDb250ZXh0KCcyZCcpOwogICAgZnVuY3Rpb24gcmVzaXplKCl7CiAgICAgIHZhciByZWN0ID0gY2FudmFzLmdldEJvdW5kaW5nQ2xpZW50UmVjdCgpOwogICAgICB2YXIgcmF0aW8gPSB3aW5kb3cuZGV2aWNlUGl4ZWxSYXRpbyB8fCAxOwogICAgICBjYW52YXMud2lkdGggPSByZWN0LndpZHRoICogcmF0aW87CiAgICAgIGNhbnZhcy5oZWlnaHQgPSByZWN0LmhlaWdodCAqIHJhdGlvOwogICAgICBjdHguc2NhbGUocmF0aW8sIHJhdGlvKTsKICAgICAgY3R4LmxpbmVXaWR0aCA9IDI7CiAgICAgIGN0eC5saW5lQ2FwID0gJ3JvdW5kJzsKICAgICAgY3R4LmxpbmVKb2luID0gJ3JvdW5kJzsKICAgICAgY3R4LnN0cm9rZVN0eWxlID0gJyMxMTEnOwogICAgfQogICAgcmVzaXplKCk7CiAgICB2YXIgZHJhd2luZyA9IGZhbHNlLCBsYXN0ID0gbnVsbCwgaGFzRHJhd24gPSBmYWxzZTsKICAgIGZ1bmN0aW9uIHBvcyhlKXsKICAgICAgdmFyIHJlY3QgPSBjYW52YXMuZ2V0Qm91bmRpbmdDbGllbnRSZWN0KCk7CiAgICAgIHZhciB0ID0gZS50b3VjaGVzID8gZS50b3VjaGVzWzBdIDogZTsKICAgICAgcmV0dXJuIHsgeDogdC5jbGllbnRYIC0gcmVjdC5sZWZ0LCB5OiB0LmNsaWVudFkgLSByZWN0LnRvcCB9OwogICAgfQogICAgZnVuY3Rpb24gc3RhcnQoZSl7IGUucHJldmVudERlZmF1bHQoKTsgZHJhd2luZyA9IHRydWU7IGxhc3QgPSBwb3MoZSk7IH0KICAgIGZ1bmN0aW9uIG1vdmUoZSl7CiAgICAgIGlmKCFkcmF3aW5nKSByZXR1cm47CiAgICAgIGUucHJldmVudERlZmF1bHQoKTsKICAgICAgdmFyIHAgPSBwb3MoZSk7CiAgICAgIGN0eC5iZWdpblBhdGgoKTsKICAgICAgY3R4Lm1vdmVUbyhsYXN0LngsIGxhc3QueSk7CiAgICAgIGN0eC5saW5lVG8ocC54LCBwLnkpOwogICAgICBjdHguc3Ryb2tlKCk7CiAgICAgIGxhc3QgPSBwOwogICAgICBoYXNEcmF3biA9IHRydWU7CiAgICB9CiAgICBmdW5jdGlvbiBlbmQoZSl7IGRyYXdpbmcgPSBmYWxzZTsgfQogICAgY2FudmFzLmFkZEV2ZW50TGlzdGVuZXIoJ21vdXNlZG93bicsIHN0YXJ0KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZW1vdmUnLCBtb3ZlKTsKICAgIHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdtb3VzZXVwJywgZW5kKTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaHN0YXJ0Jywgc3RhcnQsIHtwYXNzaXZlOmZhbHNlfSk7CiAgICBjYW52YXMuYWRkRXZlbnRMaXN0ZW5lcigndG91Y2htb3ZlJywgbW92ZSwge3Bhc3NpdmU6ZmFsc2V9KTsKICAgIGNhbnZhcy5hZGRFdmVudExpc3RlbmVyKCd0b3VjaGVuZCcsIGVuZCk7CiAgICBjYW52YXMuX2hhc0RyYXduID0gZnVuY3Rpb24oKXsgcmV0dXJuIGhhc0RyYXduOyB9OwogICAgY2FudmFzLl9jbGVhciA9IGZ1bmN0aW9uKCl7IGN0eC5jbGVhclJlY3QoMCwwLGNhbnZhcy53aWR0aCxjYW52YXMuaGVpZ2h0KTsgaGFzRHJhd249ZmFsc2U7IH07CiAgICBjYW52YXMuX3RvSW1nID0gZnVuY3Rpb24oKXsgcmV0dXJuIGNhbnZhcy50b0RhdGFVUkwoJ2ltYWdlL3BuZycpOyB9OwogICAgcmV0dXJuIGNhbnZhczsKICB9CgogIHZhciBjYW52YXNlcyA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctY2FudmFzJyk7CiAgY2FudmFzZXMuZm9yRWFjaChmdW5jdGlvbihjKXsgaW5pdFNpZyhjKTsgfSk7CgogIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJ1tkYXRhLXNpZ2NsZWFyXScpLmZvckVhY2goZnVuY3Rpb24oYnRuKXsKICAgIGJ0bi5hZGRFdmVudExpc3RlbmVyKCdjbGljaycsIGZ1bmN0aW9uKCl7CiAgICAgIHZhciBrZXkgPSBidG4uZ2V0QXR0cmlidXRlKCdkYXRhLXNpZ2NsZWFyJyk7CiAgICAgIHZhciBjYW52YXMgPSBkb2N1bWVudC5xdWVyeVNlbGVjdG9yKCcuc2lnLWNhbnZhc1tkYXRhLXNpZz0iJytrZXkrJyJdJyk7CiAgICAgIGlmKGNhbnZhcyAmJiBjYW52YXMuX2NsZWFyKSBjYW52YXMuX2NsZWFyKCk7CiAgICB9KTsKICB9KTsKCiAgLy8gQ2hhbXAgTm9tIDogcmVjb3BpZXIgbGEgdmFsZXVyIGRlIGwnaW5wdXQgdmVycyBsZSBzcGFuIMOgIGwnaW1wcmVzc2lvbgogIGZ1bmN0aW9uIHN5bmNOb21zKCl7CiAgICBkb2N1bWVudC5xdWVyeVNlbGVjdG9yQWxsKCcuc2lnLW5vbS1pbnB1dCcpLmZvckVhY2goZnVuY3Rpb24oaW5wdXQpewogICAgICB2YXIga2V5ID0gaW5wdXQuZ2V0QXR0cmlidXRlKCdkYXRhLXNpZ25vbWlucHV0Jyk7CiAgICAgIHZhciBzcGFuID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvcignLnNpZy1ub20tcHJpbnRbZGF0YS1zaWdub209Iicra2V5KyciXScpOwogICAgICBpZihzcGFuKXsgc3Bhbi50ZXh0Q29udGVudCA9IGlucHV0LnZhbHVlIHx8ICcnOyB9CiAgICB9KTsKICB9CgogIC8vIENoYW1wcyBTT0NPVEVDIChOwrAgcmFwcG9ydCwgZGF0ZSwgdGVjaG5pY2llbiwgdHJhdmF1eCkgOiBpbnB1dC90ZXh0YXJlYSAtPiBzcGFuIMOgIGwnaW1wcmVzc2lvbgogIGZ1bmN0aW9uIHN5bmNTb2MoKXsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zb2MtaW5wdXQnKS5mb3JFYWNoKGZ1bmN0aW9uKGlucHV0KXsKICAgICAgdmFyIGtleSA9IGlucHV0LmdldEF0dHJpYnV0ZSgnZGF0YS1zb2NpbnB1dCcpOwogICAgICB2YXIgc3BhbiA9IGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3IoJy5zb2MtcHJpbnRbZGF0YS1zb2NwcmludD0iJytrZXkrJyJdJyk7CiAgICAgIGlmKHNwYW4peyBzcGFuLnRleHRDb250ZW50ID0gaW5wdXQudmFsdWUgfHwgJyc7IH0KICAgIH0pOwogIH0KCiAgd2luZG93LmFkZEV2ZW50TGlzdGVuZXIoJ2JlZm9yZXByaW50JywgZnVuY3Rpb24oKXsKICAgIC8vIEZpZ2VyIGxlcyBzaWduYXR1cmVzIGVuIGltYWdlcwogICAgZG9jdW1lbnQucXVlcnlTZWxlY3RvckFsbCgnLnNpZy1jYW52YXMnKS5mb3JFYWNoKGZ1bmN0aW9uKGNhbnZhcyl7CiAgICAgIHZhciBrZXkgPSBjYW52YXMuZ2V0QXR0cmlidXRlKCdkYXRhLXNpZycpOwogICAgICB2YXIgaW1nID0gZG9jdW1lbnQucXVlcnlTZWxlY3RvcignLnNpZy1pbWdbZGF0YS1zaWdpbWc9Iicra2V5KyciXScpOwogICAgICBpZihpbWcgJiYgY2FudmFzLl9oYXNEcmF3biAmJiBjYW52YXMuX2hhc0RyYXduKCkpewogICAgICAgIGltZy5zcmMgPSBjYW52YXMuX3RvSW1nKCk7CiAgICAgICAgaW1nLnN0eWxlLmRpc3BsYXkgPSAnYmxvY2snOwogICAgICAgIGNhbnZhcy5zdHlsZS5kaXNwbGF5ID0gJ25vbmUnOwogICAgICB9CiAgICB9KTsKICAgIC8vIEFmZmljaGVyIGxlcyBub21zIHRhcMOpcyArIGNoYW1wcyBTT0NPVEVDCiAgICBzeW5jTm9tcygpOwogICAgc3luY1NvYygpOwogIH0pOwogIHdpbmRvdy5hZGRFdmVudExpc3RlbmVyKCdhZnRlcnByaW50JywgZnVuY3Rpb24oKXsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctY2FudmFzJykuZm9yRWFjaChmdW5jdGlvbihjYW52YXMpewogICAgICBjYW52YXMuc3R5bGUuZGlzcGxheSA9ICdibG9jayc7CiAgICB9KTsKICAgIGRvY3VtZW50LnF1ZXJ5U2VsZWN0b3JBbGwoJy5zaWctaW1nJykuZm9yRWFjaChmdW5jdGlvbihpbWcpewogICAgICBpbWcuc3R5bGUuZGlzcGxheSA9ICdub25lJzsKICAgIH0pOwogIH0pOwp9KSgpOwo8L3NjcmlwdD4=')));
-  html = html.replace('</body>', actionBar + sigScript + '</body>');
+  var imprimerScript = "\n<scr"+"ipt>\nwindow.__docPrefix = '"+ (docPrefix||'') +"';\nwindow.__docApercu = '"+ docNum +"';\nwindow.__docFixed = false;\nfunction cvcImprimerDoc(){\n  try {\n    if(!window.__docFixed && window.__docPrefix && window.opener && window.opener.cvcConsommerNumero){\n      var def = window.opener.cvcConsommerNumero(window.__docPrefix, window.__docApercu);\n      if(def){\n        var slots = document.querySelectorAll('.docnum-slot');\n        for(var i=0;i<slots.length;i++){ slots[i].textContent = def; }\n        window.__docFixed = true;\n      }\n    }\n  } catch(e){ /* si opener ferme */ }\n  window.print();\n}\n</scr"+"ipt>\n";
+  html = html.replace('</body>', actionBar + imprimerScript + sigScript + '</body>');
   var win = window.open('', '_blank');
   if (!win) { alert('Autorisez les popups pour g\u00e9n\u00e9rer le PDF.'); return; }
   win.document.write(html);
