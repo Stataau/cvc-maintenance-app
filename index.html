@@ -760,8 +760,8 @@ function renderDetail(m) {
 
   var totalPannes=0, totalTravaux=0;
   m.systemes.forEach(function(s) {
-    totalPannes += s.pannes.length;
-    totalTravaux += (s.travaux||[]).length;
+    s.pannes.forEach(function(p) { if (p.statut==='en cours') totalPannes++; });
+    (s.travaux||[]).forEach(function(t) { if (t.statut==='en cours') totalTravaux++; });
   });
 
   document.getElementById('content').innerHTML =
