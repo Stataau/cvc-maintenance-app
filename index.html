@@ -838,10 +838,10 @@ function openDossierEnvoi(magId) {
     +'<h2 style="font-size:17px;margin:0 0 4px">&#128206; Bon de travail en PDF</h2>'
     +'<div style="font-size:12px;color:#64748b;margin-bottom:12px">'+esc(m.nom)+' \u2013 N\u00b0 '+esc(m.code)+'</div>'
     +'<div style="font-size:12px;color:#475569;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:8px 10px;margin-bottom:12px">'
-    +'Prenez en photo le bon de travail (rempli et tamponn\u00e9). Il sera compress\u00e9, orient\u00e9 et converti en PDF, pr\u00eat \u00e0 joindre \u00e0 votre mail avec vos fiches.'
+    +'Choisissez la photo du bon de travail dans votre galerie (id\u00e9alement prise en mode document). Elle sera compress\u00e9e, orient\u00e9e et convertie en PDF, pr\u00eate \u00e0 joindre \u00e0 votre mail avec vos fiches.'
     +'</div>'
-    +'<input type="file" id="dossier-photo-input" accept="image/*" capture="environment" multiple style="display:none" onchange="onDossierPhotoAdd(this)">'
-    +'<button class="btn btn-sm" style="background:#3b82f6;color:#fff" onclick="cvcClickInput(\'dossier-photo-input\')">&#128247; Ajouter une photo</button>'
+    +'<input type="file" id="dossier-photo-input" accept="image/*" multiple style="display:none" onchange="onDossierPhotoAdd(this)">'
+    +'<button class="btn btn-sm" style="background:#3b82f6;color:#fff" onclick="cvcClickInput(\'dossier-photo-input\')">&#128247; Choisir la photo du bon</button>'
     +'<div id="dossier-photos-list" style="margin-top:12px"></div>'
     +'<div id="dossier-options" style="margin-top:12px;display:none">'
     +'<div style="font-weight:700;font-size:13px;margin-bottom:4px;color:#0f172a">Format de sortie</div>'
@@ -906,7 +906,7 @@ function renderDossierPhotos() {
   _dossierPhotos.forEach(function(photo, idx) {
     html += '<div style="border:1px solid #e2e8f0;border-radius:8px;padding:8px;margin-bottom:10px">'
       +'<div style="display:flex;gap:10px;align-items:flex-start">'
-      +'<canvas id="dossier-preview-'+idx+'" style="width:110px;height:150px;border:1px solid #ddd;border-radius:4px;background:#fff;flex-shrink:0"></canvas>'
+      +'<canvas id="dossier-preview-'+idx+'" style="max-width:150px;max-height:150px;width:auto;height:auto;border:1px solid #ddd;border-radius:4px;background:#fff;flex-shrink:0"></canvas>'
       +'<div style="flex:1;min-width:0">'
       +'<div style="font-size:12px;font-weight:700;margin-bottom:6px">Photo '+(idx+1)+'</div>'
       +'<button class="btn btn-ghost btn-sm" style="font-size:12px" onclick="roterDossierPhoto('+idx+')">&#128260; Tourner</button> '
@@ -966,8 +966,10 @@ function dessinerApercuDossier(idx) {
   var img = new Image();
   img.onload = function() {
     traiterImageDossier(img, photo.rotation, photo.contraste, function(canvas) {
-      var maxW=110, maxH=150, r = Math.min(maxW/canvas.width, maxH/canvas.height);
+      var maxW=150, maxH=150, r = Math.min(maxW/canvas.width, maxH/canvas.height);
       preview.width = canvas.width*r; preview.height = canvas.height*r;
+      preview.style.width = preview.width + 'px';
+      preview.style.height = preview.height + 'px';
       preview.getContext('2d').drawImage(canvas, 0, 0, preview.width, preview.height);
       photo._traite = canvas.toDataURL('image/jpeg', 0.8);
       photo._w = canvas.width; photo._h = canvas.height;
@@ -1531,11 +1533,10 @@ function genAttestationEntretien(magId, sysId) {
     +'</div></div>'
     +'</div>'
     +'<div class="section"><h2>D\u00e9tail de l\'entretien r\u00e9alis\u00e9</h2>'
-    +'<div class="field-row"><div class="field-label">Date d\'entretien</div><div class="field-val">'+fmt(s.dernierEntretien)+'</div></div>'
+    +'<div class="field-row"><div class="field-label">Date d\'entretien</div><div class="field-val">'+fmt(today())+'</div></div>'
     +'<div class="field-row"><div class="field-label">Technicien</div><div class="field-val">'+esc(s.technicien||'-')+'</div></div>'
     +(s.dateInstall?'<div class="field-row"><div class="field-label">Date installation</div><div class="field-val">'+fmt(s.dateInstall)+'</div></div>':'')
     +'</div>'
-    +(s.notesEntretien?'<div class="section"><h2>Observations &amp; travaux r\u00e9alis\u00e9s</h2><div style="background:#f0fdf4;border-left:4px solid #22c55e;padding:12px;border-radius:0 6px 6px 0;font-size:13px;line-height:1.7;white-space:pre-wrap">'+esc(s.notesEntretien)+'</div></div>':'')
     +'<div class="section"><h2>D\u00e9claration</h2>'
     +'<p style="font-size:13px;line-height:1.7;color:#374151">Je soussign\u00e9, technicien qualifi\u00e9, atteste avoir r\u00e9alis\u00e9 l\'entretien de l\'installation d\u00e9sign\u00e9e ci-dessus conform\u00e9ment aux r\u00e8gles de l\'art et aux pr\u00e9conisations du fabricant.</p>'
     +'</div>'
@@ -1551,7 +1552,7 @@ function genAttestationEntretien(magId, sysId) {
     +'</div>'
     +'<div class="footer-pdf" style="justify-content:center;text-align:center;flex-direction:column;gap:2px"><span>Argosynergie \u2013 42, rue Farg\u00e8s, 13008 Marseille &bull; SIRET 391 817 335 00022</span><span style="color:#bbb"><span class="docnum-slot">'+docNum+'</span></span></div>'
     +'</div></body></html>';
-  openPdfWindow(html, 'Attestation-Entretien-'+docNum, m, {date:s.dernierEntretien,technicien:s.technicien}, 'Attestation entretien '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum, docPrefix);
+  openPdfWindow(html, 'Attestation-Entretien-'+docNum, m, {date:today(),technicien:s.technicien}, 'Attestation entretien '+esc(s.codeSys)+' \u2013 '+esc(m.nom), docNum, docPrefix);
 }
 
 // ══════════════════════════════════════════════════════════════
