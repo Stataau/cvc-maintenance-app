@@ -811,6 +811,7 @@ function renderDetail(m) {
     +(totalTravaux>0?'<span class="badge badge-purple">'+totalTravaux+' travaux</span>':'')
     +'</div>'
     +'<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">'
+    +'<button class="btn btn-sm" style="background:#64748b;color:#fff" onclick="openEditMagasin('+m.id+')">&#9998; Modifier</button>'
     +'<button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="openDossierEnvoi('+m.id+')">&#128206; Dossier \u00e0 envoyer</button>'
     +'<button class="btn btn-danger btn-sm" onclick="confirmDelete('+m.id+')">&#128465; Supprimer ce magasin</button>'
     +'</div>'
@@ -2061,6 +2062,42 @@ function saveMagasin() {
   magasins.push({id:genId(), code:document.getElementById('m-code').value.trim(), centrale:centrale, nom:nom,
     adresse:document.getElementById('m-adresse').value.trim(), contact:document.getElementById('m-tel').value.trim(), systemes:[]});
   saveData(); closeModal(); render();
+}
+
+// Modifier les infos d'un magasin existant (nom, adresse, n°, centrale, tél)
+function openEditMagasin(magId) {
+  var m = getMagasin(magId);
+  if (!m) return;
+  var opts = '';
+  centrales.forEach(function(c) {
+    opts += '<option value="'+esc(c)+'"'+(m.centrale===c?' selected':'')+'>'+esc(c)+'</option>';
+  });
+  showModal('<div class="modal-box">'
+    +'<div class="modal-handle"></div><button class="modal-close" onclick="closeModal()">&#215;</button>'
+    +'<div class="modal-title">Modifier le magasin</div>'
+    +'<div class="form-grid-2">'
+    +'<div class="form-group"><label class="form-label">Centrale *</label><select id="me-centrale">'+opts+'</select></div>'
+    +'<div class="form-group"><label class="form-label">N&#176; *</label><input id="me-code" type="text" value="'+esc(m.code)+'" inputmode="numeric" style="font-family:monospace;font-weight:700;color:#3b82f6;letter-spacing:1px"></div>'
+    +'</div>'
+    +'<div class="form-group"><label class="form-label">Nom *</label><input id="me-nom" type="text" value="'+esc(m.nom)+'"></div>'
+    +'<div class="form-group"><label class="form-label">Adresse</label><input id="me-adresse" type="text" value="'+esc(m.adresse)+'"></div>'
+    +'<div class="form-group"><label class="form-label">T\u00e9l\u00e9phone</label><input id="me-tel" type="tel" value="'+esc(m.contact||'')+'"></div>'
+    +'<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Annuler</button><button class="btn btn-primary" onclick="saveEditMagasin('+m.id+')">Enregistrer</button></div>'
+    +'</div>');
+}
+
+function saveEditMagasin(magId) {
+  var m = getMagasin(magId);
+  if (!m) return;
+  var nom = document.getElementById('me-nom').value.trim();
+  var centrale = document.getElementById('me-centrale').value;
+  if (!nom||!centrale) { alert('Nom et centrale requis.'); return; }
+  m.nom = nom;
+  m.centrale = centrale;
+  m.code = document.getElementById('me-code').value.trim();
+  m.adresse = document.getElementById('me-adresse').value.trim();
+  m.contact = document.getElementById('me-tel').value.trim();
+  saveData(); closeModal(); renderDetail(m);
 }
 
 function openModalSys() {
