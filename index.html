@@ -21,6 +21,8 @@ body { background: #0d1117; color: #e2e8f0; font-family: "Segoe UI", system-ui, 
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px; }
 .stat-card { background: #1a1f2e; border: 1px solid #2a3045; border-radius: 10px; padding: 12px 6px; text-align: center; cursor: pointer; }
 .stat-card:active { background: #1e2438; }
+.stat-card.stat-active { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.35) inset; background: #1e2740; }
+.ef-btn.ef-active { outline: 3px solid rgba(255,255,255,0.55); outline-offset: -1px; box-shadow: 0 0 0 2px rgba(0,0,0,0.25); }
 .stat-val { font-size: 26px; font-weight: 800; }
 .stat-label { font-size: 10px; color: #7a8099; margin-top: 2px; text-transform: uppercase; letter-spacing: 0.4px; line-height: 1.4; }
 .search-box { background: #1a1f2e; border: 1px solid #2a3045; border-radius: 10px; padding: 12px; margin-bottom: 14px; }
@@ -409,11 +411,14 @@ function hasTravailEnCours(m) {
 function openDetail(id) { magasinSelId = id; vue = 'detail'; render(); }
 function goBack() { vue = 'liste'; magasinSelId = null; render(); }
 function fabAction() { if (vue==='liste') openModalMagasin(); else openModalSys(); }
-function filterPannesEnCours() { filters = { texte:'', code:'', centrale:'', systeme:'', pannesEnCours:true, travauxEnCours:false, entretienFilter:'' }; render(); }
-function filterTravauxEnCours() { filters = { texte:'', code:'', centrale:'', systeme:'', pannesEnCours:false, travauxEnCours:true, entretienFilter:'' }; render(); }
-function filterDemandesEnAttente() { filters = { texte:'', code:'', centrale:'', systeme:'', pannesEnCours:false, travauxEnCours:false, demandesEnAttente:true, entretienFilter:'' }; render(); }
+// Filtres CUMULATIFS : chaque bouton bascule (on/off) son propre critère sans toucher aux autres.
+// Seul clearFilters() remet tout à zéro.
+function filterPannesEnCours() { filters.pannesEnCours = !filters.pannesEnCours; render(); }
+function filterTravauxEnCours() { filters.travauxEnCours = !filters.travauxEnCours; render(); }
+function filterDemandesEnAttente() { filters.demandesEnAttente = !filters.demandesEnAttente; render(); }
 function clearFilters() { filters = { texte:'', code:'', centrale:'', systeme:'', pannesEnCours:false, travauxEnCours:false, demandesEnAttente:false, entretienFilter:'' }; render(); }
-function filterEntretien(val) { filters = { texte:'', code:'', centrale:'', systeme:'', pannesEnCours:false, travauxEnCours:false, entretienFilter:val }; render(); }
+// Entretien : une seule catégorie à la fois (un appareil est dans un seul état) ; re-cliquer désactive.
+function filterEntretien(val) { filters.entretienFilter = (filters.entretienFilter === val) ? '' : val; render(); }
 
 function render() {
   var backBtn = document.getElementById('back-btn');
@@ -460,7 +465,7 @@ function renderListe() {
   var eCl = entretiensTotal>0 ? '#ef4444' : '#22c55e';
   var tCl = travauxTotal>0 ? '#8b5cf6' : '#22c55e';
 
-  if (!searchAlreadyRendered || filters.pannesEnCours || filters.travauxEnCours || filters.demandesEnAttente) {
+  if (!searchAlreadyRendered) {
     // Full rebuild (first load or filter mode)
     var centralesOpts = '<option value="">Toutes</option>';
     centrales.forEach(function(c) {
@@ -486,7 +491,7 @@ function renderListe() {
       else if (st === 'prochain') entProchain++;
     });
 
-    var searchHtml = (filters.pannesEnCours||filters.travauxEnCours||filters.entretienFilter) ? '' :
+    var searchHtml =
       '<div id="search-zone" class="search-box">'
       +'<div class="search-label">&#128269; Recherche</div>'
       +'<div class="form-group"><span class="f-label">Nom / adresse</span>'
@@ -527,7 +532,7 @@ function renderListe() {
       + searchHtml
       +'<div id="cards-zone"></div>';
   } else {
-    // Just update stats numbers without rebuilding search bar
+    // Mode léger : mettre à jour les compteurs sans reconstruire la barre de recherche
     var statCards = contentEl.querySelectorAll('.stat-val');
     if (statCards.length >= 4) {
       statCards[0].style.color = '#3b82f6';
@@ -539,11 +544,15 @@ function renderListe() {
       statCards[3].style.color = demandesTotal>0?'#ef4444':'#22c55e';
       statCards[3].textContent = demandesTotal;
     }
-    // Update clear button
-    var clearZone = document.getElementById('clear-btn-zone');
-    if (clearZone) {
-      clearZone.innerHTML = (filters.texte||filters.code||filters.centrale||filters.systeme)
-        ? '<button class="clear-btn" onclick="clearFilters()">&#10005; Effacer les filtres</button>' : '';
+    // Mettre à jour les compteurs d'entretien (En retard / Ce mois / À planifier)
+    var r2=0, m2=0, p2=0;
+    magasins.forEach(function(mm) {
+      var st = magasinEntretienStatus(mm);
+      if (st === 'retard') r2++; else if (st === 'mois') m2++; else if (st === 'prochain') p2++;
+    });
+    var efc = contentEl.querySelectorAll('.entretien-filters .ef-count');
+    if (efc.length >= 4) {
+      efc[0].textContent = r2; efc[1].textContent = m2; efc[2].textContent = p2; efc[3].textContent = magasins.length;
     }
   }
 
@@ -566,16 +575,27 @@ function onSearchSysteme(val) { filters.systeme = val; renderCards(); }
 // Aérotherme : 1x/an (tous les 12 mois) — EN RETARD si > 6 mois depuis le dernier
 function getFrequence(s) {
   var t = (s.type||'').toLowerCase();
-  if (t.indexOf('pac') >= 0) return { nbAn:2, intervalMois:6, retardMois:4 };
+  // retardJours = nb de jours après le dernier entretien à partir duquel c'est EN RETARD
+  //   clim (PAC) : 180 jours (+1) ; aérotherme / chaudière : 365 jours (+1)
+  if (t.indexOf('pac') >= 0 || t.indexOf('clim') >= 0)
+    return { nbAn:2, intervalMois:6, retardMois:6, retardJours:180 };
   if (t.indexOf('chaudiere') >= 0 || t.indexOf('chaudière') >= 0 || t.indexOf('gaz') >= 0)
-    return { nbAn:1, intervalMois:12, retardMois:6 };
-  return { nbAn:1, intervalMois:12, retardMois:6 }; // aérotherme et autres
+    return { nbAn:1, intervalMois:12, retardMois:12, retardJours:365 };
+  return { nbAn:1, intervalMois:12, retardMois:12, retardJours:365 }; // aérotherme et autres
 }
 
 function addMonths(dateStr, n) {
   if (!dateStr) return null;
   var d = new Date(dateStr);
   d.setMonth(d.getMonth() + n);
+  return d.toISOString().split('T')[0];
+}
+
+// Ajoute n jours à une date (YYYY-MM-DD) → renvoie la date résultante au même format
+function addDays(dateStr, n) {
+  if (!dateStr) return null;
+  var d = new Date(dateStr);
+  d.setDate(d.getDate() + n);
   return d.toISOString().split('T')[0];
 }
 
@@ -592,16 +612,16 @@ function calcProchainEntretien(s) {
   }
 
   if (last) {
-    // Si l'entretien réel est APRÈS la date planifiée → calculer depuis le réel
+    // Échéance = dernier entretien réel + délai en jours (clim 180, aérotherme/chaudière 365)
     if (d2planned && last >= d2planned) {
-      return addMonths(last, freq.intervalMois);
+      return addDays(last, freq.retardJours);
     }
     // Si le 2ème planifié est dans le futur ET assez loin du dernier réel → c'est le prochain
     if (d2planned && daysUntil(d2planned) > 0) {
       return d2planned;
     }
-    // Sinon : prochain = dernier réel + intervalle
-    return addMonths(last, freq.intervalMois);
+    // Sinon : prochain = dernier réel + délai en jours
+    return addDays(last, freq.retardJours);
   }
 
   // Pas de dernier entretien réel : utiliser la date planifiée si dispo
@@ -616,36 +636,29 @@ function calcProchainEntretien(s) {
 }
 
 // ── STATUT ENTRETIEN ─────────────────────────────────────────────────────
-// Règle : EN RETARD seulement si date_retard = addMonths(dernierEntretien, retardMois) < aujourd'hui
-// Comparaison exacte de dates (pas de * 30 approximatif)
+// Règle (en JOURS fixes) : EN RETARD dès que le nb de jours écoulés depuis le dernier
+// entretien dépasse retardJours (clim 180, aérotherme/chaudière 365). Donc en retard à J+1
+// après l'échéance. Alerte "ce mois" dans les 30 jours précédant l'échéance.
 function sysEntretienStatus(s) {
   var freq = getFrequence(s);
   var last = s.dernierEntretien;
-  var today = new Date().toISOString().split('T')[0];
 
   if (!last) {
-    // Pas d'entretien réel saisi → se baser sur la date planifiée Excel
+    // Pas d'entretien réel saisi → se baser sur la date planifiée (notes/Excel)
     var prochain = calcProchainEntretien(s);
     if (!prochain) return 'inconnu';
-    if (prochain < today) return 'retard';
-    var ju = daysUntil(prochain);
-    if (ju <= 30) return 'mois';
+    var ju0 = daysUntil(prochain);
+    if (ju0 < 0) return 'retard';       // échéance dépassée
+    if (ju0 <= 30) return 'mois';
     return 'prochain';
   }
 
-  // Date à partir de laquelle c'est considéré en retard
-  var dateRetard = addMonths(last, freq.retardMois);
+  var ecoules = diffDays(last);          // nb de jours depuis le dernier entretien
+  var seuil = freq.retardJours;          // 180 (clim) ou 365 (aéro/chaudière)
 
-  // Pas encore à la date de retard → pas en retard
-  if (today < dateRetard) {
-    var prochain = addMonths(last, freq.intervalMois);
-    var ju = daysUntil(prochain);
-    if (ju <= 30) return 'mois';
-    return 'prochain';
-  }
-
-  // On a dépassé la date de retard → EN RETARD
-  return 'retard';
+  if (ecoules > seuil) return 'retard';  // strictement au-delà → en retard (J+1)
+  if (ecoules >= seuil - 30) return 'mois'; // dans les 30 derniers jours avant l'échéance
+  return 'prochain';
 }
 
 function getProchainEntretien(s) {
@@ -663,26 +676,68 @@ function magasinEntretienStatus(m) {
   return 'ok';
 }
 
+// Synchronise l'affichage des filtres (menus, champs, bouton effacer, boutons rapides actifs)
+// avec l'état réel de l'objet filters. Appelée à chaque renderCards pour un affichage cohérent.
+function cvcSyncFiltresUI() {
+  var selC = document.getElementById('search-centrale');
+  if (selC) selC.value = filters.centrale || '';
+  var selS = document.getElementById('search-systeme');
+  if (selS) selS.value = filters.systeme || '';
+  var inpT = document.getElementById('search-texte');
+  if (inpT && inpT.value !== filters.texte) inpT.value = filters.texte || '';
+  var inpC = document.getElementById('search-code');
+  if (inpC && inpC.value !== filters.code) inpC.value = filters.code || '';
+  // Bouton "Effacer les filtres" : visible dès qu'au moins un filtre est actif
+  var unFiltreActif = !!(filters.texte || filters.code || filters.centrale || filters.systeme
+    || filters.pannesEnCours || filters.travauxEnCours || filters.demandesEnAttente || filters.entretienFilter);
+  var cz = document.getElementById('clear-btn-zone');
+  if (cz) {
+    cz.innerHTML = unFiltreActif
+      ? '<button class="clear-btn" onclick="clearFilters()">&#10005; Effacer les filtres</button>' : '';
+  }
+  // État visuel "actif" des tuiles de stats et boutons entretien
+  var statCards = document.querySelectorAll('.stats-grid .stat-card');
+  // 0 = Magasins (pas cliquable), 1 = Pannes, 2 = Travaux, 3 = Demandes
+  if (statCards.length >= 4) {
+    statCards[1].classList.toggle('stat-active', !!filters.pannesEnCours);
+    statCards[2].classList.toggle('stat-active', !!filters.travauxEnCours);
+    statCards[3].classList.toggle('stat-active', !!filters.demandesEnAttente);
+  }
+  document.querySelectorAll('.entretien-filters .ef-btn').forEach(function(btn){
+    var oc = btn.getAttribute('onclick') || '';
+    var m = oc.match(/filterEntretien\('([^']+)'\)/);
+    var val = m ? m[1] : '';
+    btn.classList.toggle('ef-active', val !== '' && filters.entretienFilter === val);
+  });
+}
+
 function renderCards() {
   var cardsZone = document.getElementById('cards-zone');
   if (!cardsZone) return;
 
+  var txt = filters.texte.toLowerCase();
   var filtered = magasins.filter(function(m) {
-    if (filters.pannesEnCours) return hasPanneEnCours(m);
-    if (filters.travauxEnCours) return hasTravailEnCours(m);
-    if (filters.demandesEnAttente) return m.systemes.some(function(s){ return (s.demandes||[]).some(function(d){ return d.statut==='en attente'; }); });
-    if (filters.entretienFilter) {
-      if (filters.entretienFilter === 'all-ent') return true;
+    // TOUS les critères actifs doivent être satisfaits (filtres cumulatifs).
+    // Pannes en cours
+    if (filters.pannesEnCours && !hasPanneEnCours(m)) return false;
+    // Travaux en cours
+    if (filters.travauxEnCours && !hasTravailEnCours(m)) return false;
+    // Demandes en attente
+    if (filters.demandesEnAttente && !m.systemes.some(function(s){ return (s.demandes||[]).some(function(d){ return d.statut==='en attente'; }); })) return false;
+    // Statut entretien (une seule catégorie à la fois)
+    if (filters.entretienFilter && filters.entretienFilter !== 'all-ent') {
       var st = magasinEntretienStatus(m);
-      if (filters.entretienFilter === 'retard') return st === 'retard';
-      if (filters.entretienFilter === 'mois') return st === 'mois';
-      if (filters.entretienFilter === 'prochain') return st === 'prochain';
+      if (st !== filters.entretienFilter) return false;
     }
-    var txt = filters.texte.toLowerCase();
-    return (!filters.texte || m.nom.toLowerCase().indexOf(txt)>=0 || m.adresse.toLowerCase().indexOf(txt)>=0)
-      && (!filters.code || String(m.code).toLowerCase().indexOf(filters.code.toLowerCase())>=0)
-      && (!filters.centrale || m.centrale === filters.centrale)
-      && (!filters.systeme || (m.systemes||[]).some(function(sy){ return sy.type === filters.systeme; }));
+    // Texte (nom / adresse)
+    if (filters.texte && !(m.nom.toLowerCase().indexOf(txt)>=0 || m.adresse.toLowerCase().indexOf(txt)>=0)) return false;
+    // N° magasin
+    if (filters.code && String(m.code).toLowerCase().indexOf(filters.code.toLowerCase())<0) return false;
+    // Centrale
+    if (filters.centrale && m.centrale !== filters.centrale) return false;
+    // Type de système
+    if (filters.systeme && !(m.systemes||[]).some(function(sy){ return sy.type === filters.systeme; })) return false;
+    return true;
   });
 
   // Trier par date d'entretien si filtre entretien actif
@@ -774,12 +829,8 @@ function renderCards() {
     });
   }
   cardsZone.innerHTML = html;
-  // Mettre à jour le bouton "Effacer les filtres" (aussi quand on filtre par système)
-  var clearZone2 = document.getElementById('clear-btn-zone');
-  if (clearZone2) {
-    clearZone2.innerHTML = (filters.texte||filters.code||filters.centrale||filters.systeme)
-      ? '<button class="clear-btn" onclick="clearFilters()">&#10005; Effacer les filtres</button>' : '';
-  }
+  // Synchroniser tout l'affichage des filtres avec l'état réel (menus, champs, boutons actifs)
+  cvcSyncFiltresUI();
 }
 
 // ── DETAIL ─────────────────────────────────────────────────────────────────
