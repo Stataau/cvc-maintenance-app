@@ -449,28 +449,94 @@ function cvcGeoProgress(done, total) {
     +'<div style="background:#2a3045;border-radius:6px;height:10px;overflow:hidden;margin:10px 0"><div style="background:#3b82f6;height:100%;width:'+pct+'%;transition:width .2s"></div></div>'
     +'<p style="font-size:11px;color:#64748b">Reste en ligne, ne ferme pas l\'appli.</p></div>');
 }
+function cvcGeoVille(adr) {
+  var mm = (adr||'').match(/(\d{5})\s+(.+)$/);
+  return mm ? { cp: mm[1], ville: mm[2].trim() } : { cp:'', ville:'' };
+}
+function cvcNomAmbigu(m) {
+  var n = (m.nom||'').trim().toLowerCase(), c = 0;
+  for (var i = 0; i < magasins.length; i++) { if ((magasins[i].nom||'').trim().toLowerCase() === n) { c++; if (c > 1) return true; } }
+  return false;
+}
+function cvcGeoCandidats(m) {
+  var adr = (m.adresse||'').replace(/\s+/g, ' ').trim();
+  var nom = (m.nom||'').replace(/^\s*aldi\s*[–-]\s*/i, 'Aldi ').trim();
+  var v = cvcGeoVille(adr);
+  var cands = [];
+  if (cvcNomAmbigu(m)) {
+    // Nom partage par plusieurs magasins : l'ADRESSE prime pour les distinguer
+    if (adr) cands.push(nom + ' ' + adr);
+    if (adr) cands.push(adr);
+    if (nom) cands.push(nom);
+    if (v.ville) cands.push(nom + ' ' + v.ville);
+    if (v.cp && v.ville) cands.push(v.cp + ' ' + v.ville);
+  } else {
+    // Nom unique : on vise d'abord le commerce par son nom
+    if (nom) cands.push(nom);
+    if (v.ville) cands.push(nom + ' ' + v.ville);
+    if (adr) cands.push(nom + ' ' + adr);
+    if (adr) cands.push(adr);
+    if (v.cp && v.ville) cands.push(v.cp + ' ' + v.ville);
+  }
+  var seen = {}, out = [];
+  cands.forEach(function(c){ c = c.trim(); if (c && !seen[c]) { seen[c] = 1; out.push(c); } });
+  return out;
+}
+function cvcGeoCollisions() {
+  var pts = magasins.filter(function(m){ return typeof m.lat === 'number' && typeof m.lon === 'number'; });
+  var groupes = [], used = {};
+  for (var a = 0; a < pts.length; a++) {
+    if (used[pts[a].id]) continue;
+    var grp = [pts[a]];
+    for (var b = a+1; b < pts.length; b++) {
+      if (used[pts[b].id]) continue;
+      if (cvcHaversine({lat:pts[a].lat,lon:pts[a].lon}, {lat:pts[b].lat,lon:pts[b].lon}) < 0.1) { grp.push(pts[b]); used[pts[b].id] = 1; }
+    }
+    if (grp.length > 1) { groupes.push(grp); used[pts[a].id] = 1; }
+  }
+  return groupes;
+}
 function cvcGeocoderMagasins() {
   if (navigator.onLine === false) { alert('Géocodage impossible hors ligne.\nReconnecte-toi puis réessaie.'); return; }
   var aFaire = magasins.filter(function(m){ return m.adresse && (typeof m.lat !== 'number' || typeof m.lon !== 'number'); });
   if (!aFaire.length) { alert('Tous les magasins ont déjà leurs coordonnées GPS. ✓'); return; }
-  if (!confirm('Géocoder ' + aFaire.length + ' magasin(s) ?\nDurée ≈ ' + Math.ceil(aFaire.length*1.2) + ' s. Reste en ligne pendant l\'opération.')) return;
-  var i = 0, ok = 0, ko = 0;
+  if (!confirm('Géocoder ' + aFaire.length + ' magasin(s) ?\nDurée variable (plusieurs essais par magasin). Reste en ligne pendant l\'opération.')) return;
+  var i = 0, ok = 0, ko = 0, echecs = [];
   cvcGeoProgress(0, aFaire.length);
+  // Essaie les requetes d'un magasin, l'une apres l'autre (1,1 s entre chaque requete reseau)
+  function geocodeUn(m, cb) {
+    var cands = cvcGeoCandidats(m), c = 0;
+    function essai() {
+      if (c >= cands.length) { cb(false); return; }
+      var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=' + encodeURIComponent(cands[c]);
+      fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function(r){ return r.json(); })
+        .then(function(arr){
+          if (arr && arr.length) { m.lat = parseFloat(arr[0].lat); m.lon = parseFloat(arr[0].lon); setTimeout(function(){ cb(true); }, 1100); }
+          else { c++; setTimeout(essai, 1100); }
+        })
+        .catch(function(){ c++; setTimeout(essai, 1100); });
+    }
+    essai();
+  }
   function suivant() {
     if (i >= aFaire.length) {
       saveData();
+      var liste = echecs.length ? '<div style="font-size:11px;color:#f59e0b;margin-top:8px;max-height:30vh;overflow:auto">Non trouvés : ' + echecs.map(function(n){ return esc(n); }).join(', ') + '</div>' : '';
+      var coll = cvcGeoCollisions();
+      var collHtml = coll.length ? '<div style="font-size:11px;color:#f59e0b;margin-top:8px;max-height:30vh;overflow:auto"><b>⚠ Magasins au même emplacement (à vérifier) :</b><br>' + coll.map(function(g){ return g.map(function(m){ return 'N°'+esc(m.code)+' '+esc((m.nom||'').replace('Aldi – ','')); }).join(' = '); }).join('<br>') + '</div>' : '';
       showModal('<div class="modal-box"><div class="modal-title">✓ Géocodage terminé</div>'
-        +'<p style="font-size:13px;color:#94a3b8">'+ok+' magasin(s) localisé(s)'+(ko?', '+ko+' non trouvé(s) (adresse à corriger)':'')+'.</p>'
+        +'<p style="font-size:13px;color:#94a3b8">'+ok+' magasin(s) localisé(s)'+(ko?', '+ko+' non trouvé(s)':'')+'.</p>'
+        + liste
+        + collHtml
         +'<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">OK</button></div></div>');
       return;
     }
     var m = aFaire[i];
-    var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=' + encodeURIComponent((m.adresse||'').trim());
-    fetch(url, { headers: { 'Accept': 'application/json' } })
-      .then(function(r){ return r.json(); })
-      .then(function(arr){ if (arr && arr.length) { m.lat = parseFloat(arr[0].lat); m.lon = parseFloat(arr[0].lon); ok++; } else { ko++; } })
-      .catch(function(){ ko++; })
-      .then(function(){ i++; cvcGeoProgress(i, aFaire.length); setTimeout(suivant, 1100); });
+    geocodeUn(m, function(trouve){
+      if (trouve) ok++; else { ko++; echecs.push('N°'+(m.code||'')+' '+((m.nom||'').replace('Aldi – ',''))); }
+      i++; cvcGeoProgress(i, aFaire.length); suivant();
+    });
   }
   suivant();
 }
