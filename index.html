@@ -390,6 +390,193 @@ function esc(s) {
   if (s === null || s === undefined) return '';
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
+function cvcEstLigneHistorique(l) {
+  return /derni[eè]re?\s+visite\s+20\d{2}/i.test(l);
+}
+function buildNotesHtml(s, magId) {
+  if (!s.notesEntretien) return '';
+  var lignes = String(s.notesEntretien).split('\n');
+  var visibles = [], histos = [];
+  for (var i=0;i<lignes.length;i++) {
+    var l = lignes[i].trim();
+    if (!l) continue;
+    if (cvcEstLigneHistorique(l)) histos.push(l); else visibles.push(l);
+  }
+  if (!visibles.length && !histos.length) return '';
+  var html = '<div class="notes-box"><strong style="color:#3b82f6">&#128203; </strong>';
+  var vparts = [];
+  for (var j=0;j<visibles.length;j++) vparts.push(esc(visibles[j]));
+  html += vparts.join('<br>');
+  if (histos.length) {
+    var hid = 'hist-'+magId+'-'+s.id;
+    if (visibles.length) html += '<br>';
+    html += '<span id="'+hid+'-lnk" onclick="cvcToggleHistorique(\'' + hid + '\')" style="cursor:pointer;color:#3b82f6;font-size:11px;user-select:none">&#9656; voir historique</span>';
+    var hparts = [];
+    for (var k=0;k<histos.length;k++) hparts.push(esc(histos[k]));
+    html += '<div id="'+hid+'" style="display:none;margin-top:6px;color:#7a8099;font-size:11px">'+hparts.join('<br>')+'</div>';
+  }
+  html += '</div>';
+  return html;
+}
+function cvcToggleHistorique(id) {
+  var box = document.getElementById(id);
+  var lnk = document.getElementById(id+'-lnk');
+  if (!box) return;
+  if (box.style.display === 'none') {
+    box.style.display = 'block';
+    if (lnk) lnk.innerHTML = '&#9662; masquer historique';
+  } else {
+    box.style.display = 'none';
+    if (lnk) lnk.innerHTML = '&#9656; voir historique';
+  }
+}
+
+// ===== TOURNÉE PAR PROXIMITÉ + GÉOCODAGE (OpenStreetMap) =====
+var CVC_AURIOL = { lat: 43.3697, lon: 5.6358 }; // point de départ de repli : Auriol 13390
+
+function cvcHaversine(a, b) { // distance à vol d'oiseau en km entre deux points {lat,lon}
+  var R = 6371, toRad = function(x){ return x * Math.PI / 180; };
+  var dLat = toRad(b.lat - a.lat), dLon = toRad(b.lon - a.lon);
+  var s = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLon/2)*Math.sin(dLon/2);
+  return R * 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1-s));
+}
+
+// ----- Géocodage (une fois, en ligne) -----
+function cvcGeoProgress(done, total) {
+  var pct = total ? Math.round(done/total*100) : 0;
+  showModal('<div class="modal-box"><div class="modal-title">&#128205; Géocodage en cours…</div>'
+    +'<p style="font-size:13px;color:#94a3b8">'+done+' / '+total+' magasins ('+pct+'%)</p>'
+    +'<div style="background:#2a3045;border-radius:6px;height:10px;overflow:hidden;margin:10px 0"><div style="background:#3b82f6;height:100%;width:'+pct+'%;transition:width .2s"></div></div>'
+    +'<p style="font-size:11px;color:#64748b">Reste en ligne, ne ferme pas l\'appli.</p></div>');
+}
+function cvcGeocoderMagasins() {
+  if (navigator.onLine === false) { alert('Géocodage impossible hors ligne.\nReconnecte-toi puis réessaie.'); return; }
+  var aFaire = magasins.filter(function(m){ return m.adresse && (typeof m.lat !== 'number' || typeof m.lon !== 'number'); });
+  if (!aFaire.length) { alert('Tous les magasins ont déjà leurs coordonnées GPS. ✓'); return; }
+  if (!confirm('Géocoder ' + aFaire.length + ' magasin(s) ?\nDurée ≈ ' + Math.ceil(aFaire.length*1.2) + ' s. Reste en ligne pendant l\'opération.')) return;
+  var i = 0, ok = 0, ko = 0;
+  cvcGeoProgress(0, aFaire.length);
+  function suivant() {
+    if (i >= aFaire.length) {
+      saveData();
+      showModal('<div class="modal-box"><div class="modal-title">✓ Géocodage terminé</div>'
+        +'<p style="font-size:13px;color:#94a3b8">'+ok+' magasin(s) localisé(s)'+(ko?', '+ko+' non trouvé(s) (adresse à corriger)':'')+'.</p>'
+        +'<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">OK</button></div></div>');
+      return;
+    }
+    var m = aFaire[i];
+    var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=' + encodeURIComponent((m.adresse||'').trim());
+    fetch(url, { headers: { 'Accept': 'application/json' } })
+      .then(function(r){ return r.json(); })
+      .then(function(arr){ if (arr && arr.length) { m.lat = parseFloat(arr[0].lat); m.lon = parseFloat(arr[0].lon); ok++; } else { ko++; } })
+      .catch(function(){ ko++; })
+      .then(function(){ i++; cvcGeoProgress(i, aFaire.length); setTimeout(suivant, 1100); });
+  }
+  suivant();
+}
+
+// ----- Sélection des magasins à visiter (retard ou ce mois) -----
+function cvcMagasinsATournee() {
+  var res = [];
+  magasins.forEach(function(m){
+    var app = [];
+    (m.systemes||[]).forEach(function(s){
+      var st = sysEntretienStatus(s);
+      if (st === 'retard' || st === 'mois') {
+        var pr = getProchainEntretien(s);
+        app.push({ type: s.type, st: st, prochain: pr, ju: pr ? daysUntil(pr) : 9999 });
+      }
+    });
+    if (app.length) {
+      app.sort(function(a,b){ return a.ju - b.ju; });
+      res.push({ m: m, app: app, ju: app[0].ju, aRetard: app.some(function(a){ return a.st === 'retard'; }) });
+    }
+  });
+  return res;
+}
+
+// ----- Ordre "plus proche voisin" depuis un point de départ -----
+function cvcOrdonnerProximite(liste, depart) {
+  var avec = liste.filter(function(x){ return typeof x.m.lat === 'number' && typeof x.m.lon === 'number'; });
+  var sans = liste.filter(function(x){ return !(typeof x.m.lat === 'number' && typeof x.m.lon === 'number'); });
+  var ordonne = [], cur = depart, restants = avec.slice();
+  while (restants.length) {
+    var bi = 0, bd = Infinity;
+    for (var k = 0; k < restants.length; k++) {
+      var d = cvcHaversine(cur, { lat: restants[k].m.lat, lon: restants[k].m.lon });
+      if (d < bd) { bd = d; bi = k; }
+    }
+    var pick = restants.splice(bi, 1)[0];
+    pick._dist = bd; ordonne.push(pick);
+    cur = { lat: pick.m.lat, lon: pick.m.lon };
+  }
+  return { ordonne: ordonne, sans: sans };
+}
+
+// ----- Affichage de la tournée -----
+function openNavMag(id) { var m = getMagasin(id); if (m) openNavChoice(m.adresse || ''); }
+
+function cvcLigneTournee(x, ordre) {
+  var m = x.m;
+  var dot = x.aRetard ? '\U0001F534' : '\U0001F7E0';
+  var types = x.app.map(function(a){ return a.type; }).join(', ');
+  var pj = x.app[0].ju;
+  var urg = pj < 0 ? ('retard ' + Math.abs(pj) + ' j') : ('dans ' + pj + ' j');
+  var distTxt = (typeof x._dist === 'number') ? ' · ' + (x._dist < 1 ? Math.round(x._dist*1000) + ' m' : x._dist.toFixed(1) + ' km') : '';
+  var pastille = ordre
+    ? '<span style="background:#3b82f6;color:#fff;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">'+ordre+'</span>'
+    : '<span style="width:22px;flex-shrink:0;text-align:center;color:#64748b">–</span>';
+  return '<div style="display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #2a3045;border-radius:8px;margin-bottom:6px">'
+    + pastille
+    + '<div style="flex:1;min-width:0;cursor:pointer" onclick="closeModal();openDetail('+m.id+')">'
+      + '<div style="font-size:13px;font-weight:600">'+dot+' N°'+esc(m.code)+' '+esc((m.nom||'').replace('Aldi – ',''))+'</div>'
+      + '<div style="font-size:11px;color:#94a3b8">'+esc(types)+' · '+urg+distTxt+'</div>'
+    + '</div>'
+    + '<button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="openNavMag('+m.id+')">\U0001F4CD</button>'
+    + '</div>';
+}
+
+function cvcRenderTournee(liste, depart, libelleDepart) {
+  var parC = {};
+  liste.forEach(function(x){ (parC[x.m.centrale] = parC[x.m.centrale] || []).push(x); });
+  var manqueGeo = liste.filter(function(x){ return typeof x.m.lat !== 'number'; }).length;
+  var html = '<div class="modal-box" style="max-height:85vh;overflow:auto">'
+    + '<button class="modal-close" onclick="closeModal()">&#215;</button>'
+    + '<div class="modal-title">&#128663; Ma tournée</div>'
+    + '<p style="font-size:12px;color:#94a3b8;margin-bottom:6px">Départ : '+esc(libelleDepart)+' · tri par proximité · '+liste.length+' magasin(s) à visiter</p>';
+  if (manqueGeo) html += '<p style="font-size:11px;color:#f59e0b;margin-bottom:10px">⚠ '+manqueGeo+' magasin(s) sans GPS (en fin de liste, non triés). Lance « &#128205; Géocoder » pour les placer.</p>';
+  Object.keys(parC).sort().forEach(function(c){
+    var r = cvcOrdonnerProximite(parC[c], depart);
+    html += '<div class="section-title" style="margin:10px 0 6px">'+esc(c)+' ('+parC[c].length+')</div>';
+    var n = 1;
+    r.ordonne.forEach(function(x){ html += cvcLigneTournee(x, n++); });
+    r.sans.forEach(function(x){ html += cvcLigneTournee(x, null); });
+  });
+  html += '<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">Fermer</button></div></div>';
+  showModal(html);
+}
+
+function openTournee() {
+  var liste = cvcMagasinsATournee();
+  if (!liste.length) {
+    showModal('<div class="modal-box"><div class="modal-title">&#128663; Ma tournée</div><p style="font-size:13px;color:#94a3b8">Aucun entretien en retard ou à faire ce mois. \U0001F389</p><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">OK</button></div></div>');
+    return;
+  }
+  showModal('<div class="modal-box"><div class="modal-title">&#128663; Ma tournée</div><p style="font-size:13px;color:#94a3b8">&#128205; Recherche de ta position…</p></div>');
+  var fini = false;
+  function avec(depart, libelle) { if (fini) return; fini = true; cvcRenderTournee(liste, depart, libelle); }
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      function(pos){ avec({ lat: pos.coords.latitude, lon: pos.coords.longitude }, 'ta position'); },
+      function(){ avec(CVC_AURIOL, 'Auriol'); },
+      { timeout: 8000, maximumAge: 60000 }
+    );
+    setTimeout(function(){ avec(CVC_AURIOL, 'Auriol'); }, 9000);
+  } else {
+    avec(CVC_AURIOL, 'Auriol');
+  }
+}
+
 function getMagasin(id) { for (var i=0;i<magasins.length;i++) { if (magasins[i].id===id) return magasins[i]; } return null; }
 function getSys(m,sid) { for (var i=0;i<m.systemes.length;i++) { if (m.systemes[i].id===sid) return m.systemes[i]; } return null; }
 function getItem(items, id) { for (var i=0;i<items.length;i++) { if (items[i].id===id) return items[i]; } return null; }
@@ -514,6 +701,7 @@ function renderListe() {
       +'<button class="btn btn-ghost" onclick="exportData()" style="font-size:12px">&#128229; Export JSON</button>'
       +'<button class="btn btn-ghost" onclick="document.getElementById(\'import-input\').click()" style="font-size:12px">&#128228; Import JSON</button>'
       +'<input type="file" id="import-input" accept=".json" style="display:none" onchange="importData(this)">'
+      +'<button class="btn btn-ghost" onclick="cvcGeocoderMagasins()" style="font-size:12px">&#128205; G\u00e9ocoder</button>'
       +'</div>'
       +'<div style="font-size:11px;color:#64748b;text-align:center;padding:4px 0 2px;line-height:1.4">&#8505; &#9729;&#65039; Vos données sont enregistrées automatiquement dans le cloud et partagées en temps réel.</div>'
       +'<div class="stats-grid">'
@@ -529,6 +717,7 @@ function renderListe() {
       +'<button class="ef-btn ef-blue" onclick="filterEntretien(\'prochain\')">&#128337; \u00c0 planifier<span class="ef-count">'+entProchain+'</span></button>'
       +'<button class="ef-btn ef-green" onclick="filterEntretien(\'all-ent\')">&#9989; Tous entretiens<span class="ef-count">'+magasins.length+'</span></button>'
       +'</div>'
+      +'<button class="btn" style="width:100%;margin-top:10px;background:#3b82f6;color:#fff;font-weight:700;padding:12px;border:none;border-radius:10px" onclick="openTournee()">&#128663; Ma tourn\u00e9e du jour</button>'
       + searchHtml
       +'<div id="cards-zone"></div>';
   } else {
@@ -1831,7 +2020,7 @@ function buildSysCard(magId, s) {
     var pLabel = ju < 0 ? 'En retard de '+(Math.abs(ju))+' j' : 'Dans '+ju+' j';
     prochainHtml = '<div class="sys-meta-item" style="color:'+pColor+'">&#128197; Prochain : <span style="color:'+pColor+';font-weight:700">'+fmt(prochain)+' ('+pLabel+')</span></div>';
   }
-  var notesHtml = s.notesEntretien ? '<div class="notes-box"><strong style="color:#3b82f6">&#128203; </strong>'+esc(s.notesEntretien)+'</div>' : '';
+  var notesHtml = buildNotesHtml(s, magId);
   var marqueModele = (s.marque||s.modele) ? '<div style="font-size:12px;color:#7a8099">'+esc(s.marque)+' '+esc(s.modele)+'</div>' : '';
 
   var bodyHtml = '';
