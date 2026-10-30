@@ -1685,8 +1685,8 @@ function genPdfDepannage(magId, sysId, itemId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
   var p = null; for (var i=0;i<s.pannes.length;i++) { if (s.pannes[i].id===itemId) { p=s.pannes[i]; break; } }
   if (!p) return;
-  var docNum = compteurPeek('DEP');  // APER\u00c7U du num\u00e9ro (non consomm\u00e9) ; fix\u00e9 \u00e0 l'impression
-  var docPrefix = 'DEP';
+  var docNum = cvcNumeroFiche(p, 'numeroFiche', 'DEP');  // APER\u00c7U du num\u00e9ro (non consomm\u00e9) ; fix\u00e9 \u00e0 l'impression
+  var docPrefix = '';  // numero deja fixe a la generation
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fiche D\u00e9pannage</title>'
     + pdfStyles()
     +'</head><body><div class="page">'
@@ -1734,8 +1734,8 @@ function genPdfTravaux(magId, sysId, itemId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
   var t = null; var tw=s.travaux||[]; for (var i=0;i<tw.length;i++) { if (tw[i].id===itemId) { t=tw[i]; break; } }
   if (!t) return;
-  var docNum = compteurPeek('TRV');  // APER\u00c7U du num\u00e9ro (non consomm\u00e9) ; fix\u00e9 \u00e0 l'impression
-  var docPrefix = 'TRV';
+  var docNum = cvcNumeroFiche(t, 'numeroFiche', 'TRV');  // APER\u00c7U du num\u00e9ro (non consomm\u00e9) ; fix\u00e9 \u00e0 l'impression
+  var docPrefix = '';  // numero deja fixe a la generation
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Fiche Travaux</title>'
     + pdfStyles()
     +'</head><body><div class="page">'
@@ -1790,7 +1790,7 @@ var COMPTEUR_DEPART = { ENT: 80, SOC: 1, DEP: 1, TRV: 1 };
 // Plancher de numérotation : garantit qu'un compteur ne redescend jamais sous ces valeurs
 // pour l'année indiquée (calage manuel après reprise des anciens numéros).
 // Valeurs = dernier numéro réellement utilisé + marge de sécurité.
-var COMPTEUR_MINIMUM = { 2026: { ENT: 94, DEP: 21, TRV: 14, SOC: 19 } };
+var COMPTEUR_MINIMUM = { 2026: { ENT: 94, DEP: 34, TRV: 14, SOC: 19 } };
 
 // Relève les compteurs en mémoire à au moins le plancher défini (ne les baisse jamais).
 function cvcAppliquerPlancher() {
@@ -1863,11 +1863,55 @@ function cvcConsommerNumero(prefix, apercu) {
   return compteurNext(prefix);
 }
 
+// Attribue (une seule fois) le numero d'une fiche et l'enregistre sur l'objet porteur.
+// - obj : panne / travail / systeme qui porte le numero
+// - champ : nom du champ de stockage (ex 'numeroFiche')
+// - prefix : 'DEP' | 'TRV' | 'ENT' | 'SOC'
+// - cle (optionnel) : si fourni, le numero n'est reutilise que si la cle correspond (sinon realloue)
+// Si l'objet a deja un numero (meme cle) -> on le reutilise (reimpression = meme numero).
+// Sinon -> on consomme le compteur une fois, on l'inscrit et on sauvegarde aussitot.
+function cvcNumeroFiche(obj, champ, prefix, cle) {
+  if (obj && obj[champ] && (cle === undefined || obj[champ + '_cle'] === cle)) {
+    return obj[champ];
+  }
+  var num = compteurNext(prefix);
+  if (obj) {
+    obj[champ] = num;
+    if (cle !== undefined) obj[champ + '_cle'] = cle;
+  }
+  saveData();
+  return num;
+}
+
+// Recale chaque compteur sur le PLUS GRAND numero reellement utilise dans les donnees.
+// Garantit qu'apres un import, une synchro cloud ou un incident, le compteur ne peut
+// jamais redescendre sous un numero deja attribue (donc plus de doublon).
+function cvcCalerCompteursSurFiches() {
+  var re = /^(ENT|SOC|DEP|TRV)-(\d{4})\/(\d+)$/;
+  function note(num) {
+    if (!num) return;
+    var mm = String(num).match(re);
+    if (!mm) return;
+    var pfx = mm[1], an = mm[2], seq = parseInt(mm[3], 10);
+    if (!compteurs[pfx]) compteurs[pfx] = {};
+    if (compteurs[pfx][an] === undefined || compteurs[pfx][an] < seq) compteurs[pfx][an] = seq;
+  }
+  function scanMag(mg) {
+    (mg.systemes || []).forEach(function(s) {
+      note(s.numAttEnt); note(s.numAttSoc);
+      (s.pannes || []).forEach(function(p) { note(p.numeroFiche); });
+      (s.travaux || []).forEach(function(t) { note(t.numeroFiche); });
+    });
+  }
+  ((typeof magasins !== 'undefined' && magasins) || []).forEach(scanMag);
+  ((typeof archives !== 'undefined' && archives) || []).forEach(function(a) { if (a && a.systemes) scanMag(a); });
+}
+
 
 function genAttestationEntretien(magId, sysId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
-  var docNum = compteurPeek('ENT');  // APERÇU du numéro (non consommé) ; fixé à l'impression
-  var docPrefix = 'ENT';
+  var docNum = cvcNumeroFiche(s, 'numAttEnt', 'ENT', today());  // APERÇU du numéro (non consommé) ; fixé à l'impression
+  var docPrefix = '';  // numero deja fixe a la generation
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation Entretien</title>'
     + pdfStyles()
     +'</head><body><div class="page">'
@@ -1914,8 +1958,8 @@ function genAttestationEntretien(magId, sysId) {
 // ══════════════════════════════════════════════════════════════
 function genAttestationSocotec(magId, sysId) {
   var m = getMagasin(magId); var s = getSys(m, sysId);
-  var docNum = compteurPeek('SOC');  // APERÇU du numéro (non consommé) ; fixé à l'impression
-  var docPrefix = 'SOC';
+  var docNum = cvcNumeroFiche(s, 'numAttSoc', 'SOC', today());  // APERÇU du numéro (non consommé) ; fixé à l'impression
+  var docPrefix = '';  // numero deja fixe a la generation
   var techDefaut = (s && s.technicien) ? s.technicien : 'David STATHOPOULOS';
   var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attestation SOCOTEC</title>'
     + pdfStyles()
@@ -2873,7 +2917,8 @@ function exportData() {
     appName: 'CVC Maintenance Argosynergie',
     centrales: centrales,
     magasins: magasins,
-    archives: archives
+    archives: archives,
+    compteurs: compteurs
   };
   var json = JSON.stringify(payload, null, 2);
   var blob = new Blob([json], {type:'application/json'});
@@ -2898,6 +2943,9 @@ function importData(input) {
       magasins = d.magasins;
       centrales = d.centrales || centrales;
       archives = d.archives || [];
+      if (d.compteurs) compteurs = cvcFusionnerCompteurs(compteurs, d.compteurs);
+      cvcCalerCompteursSurFiches();
+      cvcAppliquerPlancher();
       saveData();
       render();
       alert('Import r\u00e9ussi ! '+magasins.length+' magasins charg\u00e9s.');
@@ -3001,6 +3049,7 @@ function sbChargerDonnees(callback) {
       // par type et par année, pour ne jamais réattribuer un numéro déjà utilisé.
       if (d.compteurs) compteurs = cvcFusionnerCompteurs(compteurs, d.compteurs);
       cvcAppliquerPlancher();  // garantit le minimum même si le cloud renvoie d'anciens compteurs
+      cvcCalerCompteursSurFiches();  // + ne jamais redescendre sous un numero deja utilise
     } else {
       // Base vide (1ère utilisation) → on pousse les données actuelles du fichier
       sbSauvegarderCloud();
@@ -3598,6 +3647,7 @@ function planningConfirmerSource(genre, index) {
 
 loadData();
 cvcAppliquerPlancher();  // cale les compteurs au minimum requis
+cvcCalerCompteursSurFiches();  // + recale sur le plus grand numero deja utilise (anti-doublon)
 cvcSetupLogin();
 
 // ── PWA : enregistrement du service worker (permet l'ouverture hors-ligne) ──
